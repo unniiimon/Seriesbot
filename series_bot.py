@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 
 # Constants
 DEFAULT_PORT = 8443
-ADMIN_IDS = {5387919847}  # Replace with your real Telegram user ID(s)
+ADMIN_IDS = {1426582599}  # Replace with your real Telegram user ID(s)
 
 # Environment variable validation
 def validate_env_vars() -> None:
@@ -178,7 +178,7 @@ def determine_next_episode_key(series: Optional[Dict], season_key: str) -> str:
 
 # Handle series query
 def handle_series_query(update: Update, context: CallbackContext) -> None:
-    if update.message.text.startswith("/"):  # Ignore commands
+    if update.message is None or update.message.text.startswith("/"):  # Ignore commands and non-message updates
         return
 
     text = update.message.text.strip().lower()
@@ -266,10 +266,12 @@ def handle_episode_selection(query, series, season_name, ep_name):
         query.edit_message_text(text="No qualities found for this episode.")
         return
 
+    # Show only 1080p and 720p options
     keyboard = [
         [InlineKeyboardButton(quality_name, callback_data=f"quality|{series['name']}|{season_name}|{ep_name}|{quality_name}")]
-        for quality_name in sorted(qualities.keys())
+        for quality_name in ["1080p", "720p"] if quality_name in qualities
     ]
+    
     reply_markup = InlineKeyboardMarkup(keyboard)
     query.edit_message_text(text=f"Select Quality for {ep_name}:", reply_markup=reply_markup)
 
@@ -287,7 +289,7 @@ def handle_send_all_episodes(query, series, season_name):
     keyboard = [
         [InlineKeyboardButton(quality_name, callback_data=f"quality|{series['name']}|{season_name}|{ep_name}|{quality_name}")]
         for ep_name in sorted(episodes.keys())
-        for quality_name in sorted(episodes[ep_name].get("qualities", {}).keys())
+        for quality_name in ["1080p", "720p"] if quality_name in episodes[ep_name].get("qualities", {})
     ]
     
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -311,10 +313,10 @@ def handle_quality_selection(query, series, season_name, ep_name, quality_name):
         return
 
     try:
-        if file_id_or_url.startswith(("http://", "https://")):
-            keyboard = [[InlineKeyboardButton(f"Download {ep_name} in {quality_name}", url=file_id_or_url)]]
-            reply_markup = InlineKeyboardMarkup(keyboard)
-            query.edit_message_text(text=f"Download link for {ep_name} in {quality_name}:", reply_markup=reply_markup)
+        if isinstance(file_id_or_url, list):  # If there are multiple files for the episode
+            for file in file_id_or_url:
+                context.bot.send_document(chat_id=query.from_user.id, document=file)
+            query.edit_message_text(text=f"Sent all files for {ep_name} in {quality_name} to your private chat.")
         else:
             context.bot.send_document(chat_id=query.from_user.id, document=file_id_or_url)
             query.edit_message_text(text=f"Sent {ep_name} in {quality_name} to your private chat.")
