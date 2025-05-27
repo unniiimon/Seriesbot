@@ -306,7 +306,9 @@ def button_handler(update: Update, context: CallbackContext) -> None:
         query.edit_message_text(text=f"Select Quality for {ep_name}:", reply_markup=reply_markup)
 
     elif action == "all_episodes":
-        # Handle "All Episodes" for a season or whole series
+        chat_id = query.message.chat_id
+        user_id = query.from_user.id
+
         if len(parts) == 3:
             season_name = parts[2]
             episodes = series["seasons"].get(season_name, {}).get("episodes", {})
@@ -314,41 +316,44 @@ def button_handler(update: Update, context: CallbackContext) -> None:
                 query.edit_message_text(text="No episodes found in this season.")
                 return
 
-            # Send all episodes files one by one
+            query.edit_message_text(text=f"Sending all episodes for {season_name}...")
+
             for ep_name, episode in episodes.items():
                 qualities = episode.get("qualities", {})
-                quality_msgs = []
                 for quality_name, file_id_or_url in qualities.items():
-                    if file_id_or_url.startswith("http://") or file_id_or_url.startswith("https://"):
-                        quality_msgs.append(f"{quality_name}: {file_id_or_url}")
-                    else:
-                        quality_msgs.append(f"{quality_name}: [Telegram File]")
-                text_msg = f"📺 {ep_name} ({season_name}):\n" + "\n".join(quality_msgs)
-                # Send the message
-                try:
-                    query.message.reply_text(text=text_msg, parse_mode="Markdown")
-                except Exception as e:
-                    logger.error(f"Failed to send all episodes message: {e}")
+                    try:
+                        if file_id_or_url.startswith("http://") or file_id_or_url.startswith("https://"):
+                            context.bot.send_message(
+                                chat_id=user_id,
+                                text=f"{ep_name} ({season_name}) - {quality_name}:\n{file_id_or_url}"
+                            )
+                        else:
+                            context.bot.send_document(chat_id=user_id, document=file_id_or_url)
+                    except Exception as e:
+                        logger.error(f"Error sending file {ep_name} {quality_name}: {e}")
 
-            query.edit_message_text(text=f"Sent all episodes info for {season_name} to the chat.")
+            context.bot.send_message(chat_id=chat_id, text=f"All episodes for {season_name} sent to your private chat.")
+
         else:
-            # All seasons all episodes
+            query.edit_message_text(text="Sending all episodes for all seasons...")
+
             for season_name, season in series.get("seasons", {}).items():
                 episodes = season.get("episodes", {})
                 for ep_name, episode in episodes.items():
                     qualities = episode.get("qualities", {})
-                    quality_msgs = []
                     for quality_name, file_id_or_url in qualities.items():
-                        if file_id_or_url.startswith("http://") or file_id_or_url.startswith("https://"):
-                            quality_msgs.append(f"{quality_name}: {file_id_or_url}")
-                        else:
-                            quality_msgs.append(f"{quality_name}: [Telegram File]")
-                    text_msg = f"📺 {ep_name} ({season_name}):\n" + "\n".join(quality_msgs)
-                    try:
-                        query.message.reply_text(text=text_msg, parse_mode="Markdown")
-                    except Exception as e:
-                        logger.error(f"Failed to send all episodes message: {e}")
-            query.edit_message_text(text="Sent all episodes info for all seasons.")
+                        try:
+                            if file_id_or_url.startswith("http://") or file_id_or_url.startswith("https://"):
+                                context.bot.send_message(
+                                    chat_id=user_id,
+                                    text=f"{ep_name} ({season_name}) - {quality_name}:\n{file_id_or_url}"
+                                )
+                            else:
+                                context.bot.send_document(chat_id=user_id, document=file_id_or_url)
+                        except Exception as e:
+                            logger.error(f"Error sending file {ep_name} {quality_name}: {e}")
+
+            context.bot.send_message(chat_id=chat_id, text="All episodes for all seasons sent to your private chat.")
 
     elif action == "quality":
         if len(parts) < 5:
@@ -416,4 +421,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-
