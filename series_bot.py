@@ -197,8 +197,6 @@ def handle_series_query(update: Update, context: CallbackContext) -> None:
         for season_name in sorted(seasons.keys())
     ]
 
-    keyboard.append([InlineKeyboardButton("Send All Episodes", callback_data=f"send_all|{series['name']}|{season_name}")])
-    
     reply_markup = InlineKeyboardMarkup(keyboard)
     update.message.reply_text(f"Select Season for {series['name']}:", reply_markup=reply_markup)
 
@@ -222,13 +220,20 @@ def button_handler(update: Update, context: CallbackContext) -> None:
         return
 
     if action == "season":
-        handle_season_selection(query, series, data[2])
+        season_name = data[2]
+        handle_season_selection(query, series, season_name)
     elif action == "episode":
-        handle_episode_selection(query, series, data[2], data[3])
+        season_name = data[2]
+        ep_name = data[3]
+        handle_episode_selection(query, series, season_name, ep_name)
     elif action == "quality":
-        handle_quality_selection(query, series, data[2], data[3], data[4])
+        season_name = data[2]
+        ep_name = data[3]
+        quality_name = data[4]
+        handle_quality_selection(query, series, season_name, ep_name, quality_name)
     elif action == "send_all":
-        handle_send_all_episodes(query, series, data[2])
+        season_name = data[2]
+        handle_send_all_episodes(query, series, season_name)
     else:
         query.edit_message_text(text="Unknown action.")
 
