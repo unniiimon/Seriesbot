@@ -47,7 +47,7 @@ series_collection = db.series
 &nbsp;
 
 # Set your admin Telegram user IDs here (set your own admin ID here)
-ADMIN_IDS = {123456789}  # Replace with actual admin user IDs
+ADMIN_IDS = {5387919847}  # Replace with actual admin user IDs
 &nbsp;
 &nbsp;
 
