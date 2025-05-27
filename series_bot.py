@@ -5,14 +5,12 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackQueryHandler, CallbackContext
 from pymongo import MongoClient
 from typing import Optional, Dict, Any
-&nbsp;
-&nbsp;
+
 
 # Enable logging
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
-&nbsp;
-&nbsp;
+
 
 # Constants
 DEFAULT_PORT = 8443
