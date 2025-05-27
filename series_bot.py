@@ -203,7 +203,9 @@ def handle_series_query(update: Update, context: CallbackContext) -> None:
         return
 
     # Redirect user to PM
-    context.bot.send_message(chat_id=update.effective_user.id, text=f"You requested the series: {text.title()}. Please check your PM for further actions.")
+    if update.message.chat.type == "group":
+        context.bot.send_message(chat_id=update.effective_user.id, text=f"You requested the series: {text.title()}. Please check your PM for further actions.")
+        return
 
     seasons = series.get("seasons", {})
     if not seasons:
