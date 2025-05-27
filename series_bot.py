@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 
 # Constants
 DEFAULT_PORT = 8443
-ADMIN_IDS = {1426582599}  # Replace with your real Telegram user ID(s)
+ADMIN_IDS = {5387919847}  # Replace with your real Telegram user ID(s)
 
 # Environment variable validation
 def validate_env_vars() -> None:
@@ -231,9 +231,6 @@ def button_handler(update: Update, context: CallbackContext) -> None:
         ep_name = data[3]
         quality_name = data[4]
         handle_quality_selection(query, series, season_name, ep_name, quality_name)
-    elif action == "send_all":
-        season_name = data[2]
-        handle_send_all_episodes(query, series, season_name)
     else:
         query.edit_message_text(text="Unknown action.")
 
@@ -252,8 +249,6 @@ def handle_season_selection(query, series, season_name):
         [InlineKeyboardButton(ep_name, callback_data=f"episode|{series['name']}|{season_name}|{ep_name}")]
         for ep_name in sorted(episodes.keys())
     ]
-    
-    keyboard.append([InlineKeyboardButton("Send All Episodes", callback_data=f"send_all|{series['name']}|{season_name}")])
     
     reply_markup = InlineKeyboardMarkup(keyboard)
     query.edit_message_text(text=f"Select Episode for {season_name}:", reply_markup=reply_markup)
@@ -282,26 +277,6 @@ def handle_episode_selection(query, series, season_name, ep_name):
     
     reply_markup = InlineKeyboardMarkup(keyboard)
     query.edit_message_text(text=f"Select Quality for {ep_name}:", reply_markup=reply_markup)
-
-def handle_send_all_episodes(query, series, season_name):
-    season = series.get("seasons", {}).get(season_name)
-    if not season:
-        query.edit_message_text(text="Season not found.")
-        return
-
-    episodes = season.get("episodes", {})
-    if not episodes:
-        query.edit_message_text(text="No episodes found in this season.")
-        return
-
-    keyboard = [
-        [InlineKeyboardButton(quality_name, callback_data=f"quality|{series['name']}|{season_name}|{ep_name}|{quality_name}")]
-        for ep_name in sorted(episodes.keys())
-        for quality_name in ["1080p", "720p"] if quality_name in episodes[ep_name].get("qualities", {})
-    ]
-    
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    query.edit_message_text(text=f"Select Quality to send all episodes for {season_name}:", reply_markup=reply_markup)
 
 def handle_quality_selection(query, series, season_name, ep_name, quality_name):
     season = series.get("seasons", {}).get(season_name)
