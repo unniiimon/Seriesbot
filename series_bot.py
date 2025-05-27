@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 # Constants
 DEFAULT_PORT = 8443
-ADMIN_IDS = {5387919847}  # Replace with your real Telegram user ID(s)
+ADMIN_IDS = {1426582599}  # Replace with your real Telegram user ID(s)
 &nbsp;
 &nbsp;
 
