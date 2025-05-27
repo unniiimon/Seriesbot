@@ -1,11 +1,10 @@
 import logging
 import os
-import json
+import re
 from telegram import (
     Update,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
-    InputFile,
 )
 from telegram.ext import (
     Updater,
@@ -23,21 +22,22 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Environment variables for bot token and MongoDB connection string
+# Environment variables for bot token, MongoDB connection string, and port
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 MONGO_URI = os.environ.get("MONGO_URI")
+PORT = int(os.environ.get("PORT", "8443"))  # default 8443 for HTTPS webhook use if needed
 
 if not BOT_TOKEN or not MONGO_URI:
     logger.error("Missing BOT_TOKEN or MONGO_URI environment variables")
     exit(1)
 
-# Initialize MongoDB client and db
-client = MongoClient(MONGO_URI)
+# Initialize MongoDB client and db with best practice URI options (use TLS, timeout, etc.)
+client = MongoClient(MONGO_URI, tls=True, tlsAllowInvalidCertificates=True, serverSelectionTimeoutMS=5000)
 db = client.series_bot_db
 series_collection = db.series
 
-# Set your admin Telegram user IDs here (set your own admin ID here)
-ADMIN_IDS = {5387919847}  # Replace with actual admin user IDs
+# Set your admin Telegram user IDs here (replace with actual admin user IDs)
+ADMIN_IDS = {5387919847}  # Replace with your real Telegram user ID(s)
 
 # Helper function: Check if user is admin
 def is_admin(user_id: int) -> bool:
@@ -48,20 +48,22 @@ def start(update: Update, context: CallbackContext) -> None:
     update.message.reply_text(
         "Welcome to the Series Bot!\n\n"
         "Send the name of a series in any chat to get started.\n"
-        "Admins: Use /addseries command in PM to add new series."
+        "Admins: Send files with caption 'SeriesName | SeasonNumber | Quality' to add episodes.\n"
+        "Example caption: Stranger Things | S1 | 720p\n"
+        "Or use /addseries command with JSON payload."
     )
 
-# Admin command to add series - usage: /addseries followed by a JSON string or send JSON after it
+# Admin command - add series with JSON (unchanged)
 def addseries_command(update: Update, context: CallbackContext) -> None:
     user_id = update.effective_user.id
     if not is_admin(user_id):
         update.message.reply_text("You are not authorized to add series.")
         return
 
-    # Accept JSON data inline or as next message
     if context.args:
         json_text = " ".join(context.args)
         try:
+            import json
             data = json.loads(json_text)
             response = save_series_to_db(data)
             update.message.reply_text(response)
@@ -87,10 +89,9 @@ def addseries_command(update: Update, context: CallbackContext) -> None:
             "}\n\n"
             "Send this JSON now."
         )
-        # Save state to expect next message for JSON data
         context.user_data["awaiting_series_json"] = True
 
-# Handle admin JSON payload for adding series
+# Handle admin JSON payload for adding series (unchanged)
 def handle_admin_json(update: Update, context: CallbackContext) -> None:
     user_id = update.effective_user.id
     if not is_admin(user_id):
@@ -98,6 +99,7 @@ def handle_admin_json(update: Update, context: CallbackContext) -> None:
     if context.user_data.get("awaiting_series_json"):
         text = update.message.text
         try:
+            import json
             data = json.loads(text)
             response = save_series_to_db(data)
             update.message.reply_text(response)
@@ -105,15 +107,11 @@ def handle_admin_json(update: Update, context: CallbackContext) -> None:
             update.message.reply_text(f"Failed to add series: {e}")
         context.user_data["awaiting_series_json"] = False
 
-# Save or update series data to MongoDB
+# Save or update series data to MongoDB (unchanged)
 def save_series_to_db(data: dict) -> str:
     if "name" not in data or "seasons" not in data:
         return "Invalid data format. 'name' and 'seasons' fields are required."
-
-    # Normalize series name to lowercase for querying
     series_name = data["name"].strip().lower()
-
-    # Upsert the series by name
     result = series_collection.update_one(
         {"name": series_name},
         {"$set": data},
@@ -124,10 +122,88 @@ def save_series_to_db(data: dict) -> str:
     else:
         return "No changes made to the database."
 
-# When user sends text message (series name) in group or PM
+# Parse caption like "Stranger Things | S1 | 720p" to extract info
+def parse_caption(caption: str):
+    # Simple split by |, strip whitespace
+    parts = [p.strip() for p in caption.split("|")]
+    if len(parts) != 3:
+        return None
+    series_name, season, quality = parts
+    # Normalize season to Capital S + number (ex: S1)
+    season = season.upper()
+    if not season.startswith("S"):
+        season = "S" + season.lstrip("Season").strip()
+    return series_name, season, quality
+
+# Admin sends a file with caption to add episode info
+def handle_admin_file(update: Update, context: CallbackContext) -> None:
+    user_id = update.effective_user.id
+    if not is_admin(user_id):
+        return
+
+    message = update.message
+
+    # Check for document or video file
+    file_obj = None
+    if message.document:
+        file_obj = message.document
+    elif message.video:
+        file_obj = message.video
+    else:
+        update.message.reply_text("Please send a document or video file with caption.")
+        return
+
+    caption = message.caption
+    if not caption:
+        update.message.reply_text("Please add a caption in format: SeriesName | Season | Quality")
+        return
+
+    parsed = parse_caption(caption)
+    if not parsed:
+        update.message.reply_text("Caption format invalid. Use: SeriesName | Season | Quality")
+        return
+
+    series_name, season_key, quality_key = parsed
+    file_id = file_obj.file_id
+
+    # Upsert episode with the file_id for quality
+    series_name_key = series_name.strip().lower()
+    # We assign episode key based on how many episodes already in that season + 1
+    series = series_collection.find_one({"name": series_name_key})
+    episodes_key = None
+    if series and "seasons" in series and season_key in series["seasons"]:
+        existing_episodes = series["seasons"][season_key].get("episodes", {})
+        episodes_list = sorted(existing_episodes.keys()) if existing_episodes else []
+        next_ep_num = 1
+        for ep in episodes_list:
+            if ep.startswith("E") and ep[1:].isdigit():
+                n = int(ep[1:])
+                if n >= next_ep_num:
+                    next_ep_num = n + 1
+        episodes_key = f"E{next_ep_num}"
+    else:
+        episodes_key = "E1"
+
+    # Prepare update to MongoDB
+    update_query = {
+        f"seasons.{season_key}.episodes.{episodes_key}.qualities.{quality_key}": file_id,
+        "name": series_name_key
+    }
+    # Use $setOnInsert to set name only if new
+    result = series_collection.update_one(
+        {"name": series_name_key},
+        {"$set": update_query},
+        upsert=True
+    )
+
+    update.message.reply_text(
+        f"Added/updated episode {episodes_key} of {series_name} season {season_key} quality {quality_key} successfully."
+    )
+
+
+# When user sends text message (series name) in group or PM (unchanged)
 def handle_series_query(update: Update, context: CallbackContext) -> None:
-    # Ignore commands
-    if update.message.text.startswith('/'):
+    if update.message.text.startswith("/"):  # Ignore commands
         return
 
     text = update.message.text.strip().lower()
@@ -136,7 +212,6 @@ def handle_series_query(update: Update, context: CallbackContext) -> None:
         update.message.reply_text("Sorry, series not found in database.")
         return
 
-    # Show season buttons
     seasons = series.get("seasons", {})
     if not seasons:
         update.message.reply_text("No seasons found for this series.")
@@ -144,38 +219,38 @@ def handle_series_query(update: Update, context: CallbackContext) -> None:
 
     keyboard = []
     for season_name in sorted(seasons.keys()):
-        keyboard.append([InlineKeyboardButton(season_name, callback_data=f"season|{series['name']}|{season_name}")])
+        keyboard.append(
+            [InlineKeyboardButton(season_name, callback_data=f"season|{series['name']}|{season_name}")]
+        )
 
     reply_markup = InlineKeyboardMarkup(keyboard)
     update.message.reply_text(f"Select Season for {series['name']}:", reply_markup=reply_markup)
 
-# Handle all button callbacks
+# Handle button callbacks (unchanged)
 def button_handler(update: Update, context: CallbackContext) -> None:
     query = update.callback_query
     query.answer()
     data = query.data
-    components = data.split("|")
+    parts = data.split("|")
 
-    if len(components) < 3:
+    if len(parts) < 3:
         query.edit_message_text(text="Invalid action.")
         return
 
-    action = components[0]
-    series_name = components[1]
-    # Normalize series name for DB lookup
+    action = parts[0]
+    series_name = parts[1]
     series = series_collection.find_one({"name": series_name.lower()})
     if not series:
         query.edit_message_text(text="Series data not found.")
         return
 
     if action == "season":
-        season_name = components[2]
+        season_name = parts[2]
         seasons = series.get("seasons", {})
         season = seasons.get(season_name)
         if not season:
             query.edit_message_text(text="Season not found.")
             return
-
         episodes = season.get("episodes", {})
         if not episodes:
             query.edit_message_text(text="No episodes found in this season.")
@@ -190,11 +265,11 @@ def button_handler(update: Update, context: CallbackContext) -> None:
         query.edit_message_text(text=f"Select Episode for {season_name}:", reply_markup=reply_markup)
 
     elif action == "episode":
-        if len(components) < 4:
+        if len(parts) < 4:
             query.edit_message_text(text="Invalid episode action.")
             return
-        season_name = components[2]
-        ep_name = components[3]
+        season_name = parts[2]
+        ep_name = parts[3]
         seasons = series.get("seasons", {})
         season = seasons.get(season_name)
         if not season:
@@ -205,7 +280,6 @@ def button_handler(update: Update, context: CallbackContext) -> None:
         if not episode:
             query.edit_message_text(text="Episode not found.")
             return
-
         qualities = episode.get("qualities", {})
         if not qualities:
             query.edit_message_text(text="No qualities found for this episode.")
@@ -225,12 +299,12 @@ def button_handler(update: Update, context: CallbackContext) -> None:
         query.edit_message_text(text=f"Select Quality for {ep_name}:", reply_markup=reply_markup)
 
     elif action == "quality":
-        if len(components) < 5:
+        if len(parts) < 5:
             query.edit_message_text(text="Invalid quality action.")
             return
-        season_name = components[2]
-        ep_name = components[3]
-        quality_name = components[4]
+        season_name = parts[2]
+        ep_name = parts[3]
+        quality_name = parts[4]
 
         seasons = series.get("seasons", {})
         season = seasons.get(season_name)
@@ -248,11 +322,8 @@ def button_handler(update: Update, context: CallbackContext) -> None:
             query.edit_message_text(text="File not found for selected quality.")
             return
 
-        # Try sending file by file_id or URL:
         try:
-            # If file_id_or_url looks like a Telegram file_id (only digits and letters)
             if file_id_or_url.startswith("http://") or file_id_or_url.startswith("https://"):
-                # It's a URL - send as message with link or with inline button
                 keyboard = [
                     [InlineKeyboardButton(f"Download {ep_name} in {quality_name}", url=file_id_or_url)]
                 ]
@@ -262,7 +333,6 @@ def button_handler(update: Update, context: CallbackContext) -> None:
                     reply_markup=reply_markup,
                 )
             else:
-                # Assume it's a Telegram file_id - send file privately (if possible)
                 context.bot.send_document(chat_id=query.from_user.id, document=file_id_or_url)
                 query.edit_message_text(text=f"Sent {ep_name} in {quality_name} to your private chat.")
         except Exception as e:
@@ -278,23 +348,22 @@ def main():
     updater = Updater(BOT_TOKEN)
     dispatcher = updater.dispatcher
 
-    # Command handlers
     dispatcher.add_handler(CommandHandler("start", start))
     dispatcher.add_handler(CommandHandler("addseries", addseries_command))
-    # Message handlers
     dispatcher.add_handler(MessageHandler(Filters.text & (~Filters.command), handle_series_query))
     dispatcher.add_handler(MessageHandler(Filters.text & (~Filters.command), handle_admin_json))
+    # Admin file upload handler with caption
+    dispatcher.add_handler(MessageHandler(Filters.document | Filters.video, handle_admin_file))
 
-    # Callback query handler
     dispatcher.add_handler(CallbackQueryHandler(button_handler))
-
-    # Error handler
     dispatcher.add_error_handler(error_handler)
 
-    # Start the Bot
+    # For deployment port awareness (e.g., with webhooks you can adjust)
+    # But here we use polling, so port doesn't affect bot operation
     updater.start_polling()
     logger.info("Bot started.")
     updater.idle()
 
 if __name__ == '__main__':
     main()
+
