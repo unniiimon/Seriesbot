@@ -197,6 +197,8 @@ def handle_series_query(update: Update, context: CallbackContext) -> None:
         for season_name in sorted(seasons.keys())
     ]
 
+    keyboard.append([InlineKeyboardButton("Send All Episodes", callback_data=f"send_all|{series['name']}|{season_name}")])
+    
     reply_markup = InlineKeyboardMarkup(keyboard)
     update.message.reply_text(f"Select Season for {series['name']}:", reply_markup=reply_markup)
 
@@ -245,6 +247,7 @@ def handle_season_selection(query, series, season_name):
         [InlineKeyboardButton(ep_name, callback_data=f"episode|{series['name']}|{season_name}|{ep_name}")]
         for ep_name in sorted(episodes.keys())
     ]
+    
     keyboard.append([InlineKeyboardButton("Send All Episodes", callback_data=f"send_all|{series['name']}|{season_name}")])
     
     reply_markup = InlineKeyboardMarkup(keyboard)
