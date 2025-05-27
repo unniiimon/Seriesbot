@@ -1,18 +1,23 @@
-import logging
+ reply_markup ⬤import logging
 import os
 import json
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackQueryHandler, CallbackContext
 from pymongo import MongoClient
 from typing import Optional, Dict, Any
+&nbsp;
+&nbsp;
 
 # Enable logging
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
+&nbsp;
+&nbsp;
 
 # Constants
 DEFAULT_PORT = 8443
 ADMIN_IDS = {5387919847}  # Replace with your real Telegram user ID(s)
+
 
 # Environment variable validation
 def validate_env_vars() -> None:
@@ -23,13 +28,17 @@ def validate_env_vars() -> None:
         exit(1)
     return bot_token, mongo_uri
 
+
 # Initialize MongoDB client
 def init_mongo_client(mongo_uri: str) -> MongoClient:
     return MongoClient(mongo_uri, tls=True, tlsAllowInvalidCertificates=True, serverSelectionTimeoutMS=5000)
 
+
 # Check if user is admin
 def is_admin(user_id: int) -> bool:
     return user_id in ADMIN_IDS
+
+
 
 # Start command handler
 def start(update: Update, context: CallbackContext) -> None:
@@ -41,11 +50,13 @@ def start(update: Update, context: CallbackContext) -> None:
         "Or use /addseries command with JSON payload."
     )
 
+
 # Add series command
 def addseries_command(update: Update, context: CallbackContext) -> None:
     if not is_admin(update.effective_user.id):
         update.message.reply_text("You are not authorized to add series.")
         return
+
 
     if context.args:
         json_text = " ".join(context.args)
@@ -79,6 +90,7 @@ def addseries_command(update: Update, context: CallbackContext) -> None:
         )
         context.user_data["awaiting_series_json"] = True
 
+
 # Handle admin JSON payload
 def handle_admin_json(update: Update, context: CallbackContext) -> None:
     if not is_admin(update.effective_user.id):
@@ -96,18 +108,21 @@ def handle_admin_json(update: Update, context: CallbackContext) -> None:
         finally:
             context.user_data["awaiting_series_json"] = False
 
+
 # Save or update series data to MongoDB
 def save_series_to_db(data: Dict[str, Any]) -> str:
     if "name" not in data or "seasons" not in data:
         return "Invalid data format. 'name' and 'seasons' fields are required."
-    
+
+
     series_name = data["name"].strip().lower()
     result = series_collection.update_one(
         {"name": series_name},
         {"$set": data},
         upsert=True,
     )
-    
+
+
     if result.upserted_id or result.modified_count:
         return f"Series '{data['name']}' added/updated successfully."
     else:
@@ -122,6 +137,7 @@ def parse_caption(caption: str) -> Optional[tuple]:
     season = season.upper() if season.startswith("S") else "S" + season.lstrip("Season").strip()
     return series_name, season, quality
 
+
 # Handle admin file upload
 def handle_admin_file(update: Update, context: CallbackContext) -> None:
     if not is_admin(update.effective_user.id):
@@ -133,30 +149,35 @@ def handle_admin_file(update: Update, context: CallbackContext) -> None:
         update.message.reply_text("Please send a document or video file with caption.")
         return
 
+
     caption = message.caption
     if not caption:
         update.message.reply_text("Please add a caption in format: SeriesName | Season | Quality")
         return
+
 
     parsed = parse_caption(caption)
     if not parsed:
         update.message.reply_text("Caption format invalid. Use: SeriesName | Season | Quality")
         return
 
+
     series_name, season_key, quality_key = parsed
     file_id = file_obj.file_id
     series_name_key = series_name.strip().lower()
 
+
     # Determine the next episode number
     series = series_collection.find_one({"name": series_name_key})
     episodes_key = determine_next_episode_key(series, season_key)
+
 
     # Prepare update to MongoDB
     update_query = {
         f"seasons.{season_key}.episodes.{episodes_key}.qualities.{quality_key}": file_id,
         "name": series_name_key
     }
-    
+
     series_collection.update_one(
         {"name": series_name_key},
         {"$set": update_query},
@@ -249,7 +270,7 @@ def handle_season_selection(query, series, season_name):
         [InlineKeyboardButton(ep_name, callback_data=f"episode|{series['name']}|{season_name}|{ep_name}")]
         for ep_name in sorted(episodes.keys())
     ]
-    
+
     reply_markup = InlineKeyboardMarkup(keyboard)
     query.edit_message_text(text=f"Select Episode for {season_name}:", reply_markup=reply_markup)
 
@@ -274,7 +295,7 @@ def handle_episode_selection(query, series, season_name, ep_name):
         [InlineKeyboardButton(quality_name, callback_data=f"quality|{series['name']}|{season_name}|{ep_name}|{quality_name}")]
         for quality_name in ["1080p", "720p"] if quality_name in qualities
     ]
-    
+
     reply_markup = InlineKeyboardMarkup(keyboard)
     query.edit_message_text(text=f"Select Quality for {ep_name}:", reply_markup=reply_markup)
 
