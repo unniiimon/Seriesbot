@@ -235,7 +235,7 @@ def button_handler(update: Update, context: CallbackContext) -> None:
     data = query.data
     parts = data.split("|")
 
-    if len(parts)  2:
+    if len(parts) < 2:
         query.edit_message_text(text="Invalid action.")
         return
 
