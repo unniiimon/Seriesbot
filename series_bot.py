@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 
 # Constants
 DEFAULT_PORT = 8443
-ADMIN_IDS = {1426582599}  # Replace with your real Telegram user ID(s)
+ADMIN_IDS = {5387919847}  # Replace with your real Telegram user ID(s)
 
 # Environment variable validation
 def validate_env_vars() -> None:
@@ -172,7 +172,7 @@ def determine_next_episode_key(series: Optional[Dict], season_key: str) -> str:
     if series and "seasons" in series and season_key in series["seasons"]:
         existing_episodes = series["seasons"][season_key].get("episodes", {})
         episodes_list = sorted(existing_episodes.keys()) if existing_episodes else []
-        next_ep_num = max(int(ep[1:]) for ep in episodes_list if ep.startswith("E"), default=0) + 1
+        next_ep_num = max((int(ep[1:]) for ep in episodes_list if ep.startswith("E")), default=0) + 1
         return f"E{next_ep_num}"
     return "E1"
 
