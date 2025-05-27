@@ -203,7 +203,7 @@ def handle_series_query(update: Update, context: CallbackContext) -> None:
     text = update.message.text.strip().lower()
     series = series_collection.find_one({"name": text})
     if not series:
-        update.message.reply_text("Sorry, series not found in database.")
+        update.message.reply_text(f"Sorry, series not found in database  {user_mention}.")
         return
 
     # Send a photo with a custom caption
@@ -353,7 +353,7 @@ def button_handler(update: Update, context: CallbackContext) -> None:
                         except Exception as e:
                             logger.error(f"Error sending file {ep_name} {quality_name}: {e}")
 
-            context.bot.send_message(chat_id=chat_id, text="All episodes for all seasons sent to your private chat.")
+            context.bot.send_message(chat_id=chat_id, text=f"All episodes for all seasons sent to your private chat  {user_mention}.")
 
     elif action == "quality":
         if len(parts)  5:
