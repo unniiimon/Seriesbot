@@ -5,6 +5,7 @@ from telegram import (
     Update,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
+    InputFile,
 )
 from telegram.ext import (
     Updater,
@@ -26,6 +27,7 @@ logger = logging.getLogger(__name__)
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 MONGO_URI = os.environ.get("MONGO_URI")
 PORT = int(os.environ.get("PORT", "8443"))  # default 8443 for HTTPS webhook use if needed
+PIC_URL = os.environ.get("PIC_URL")  # URL or file_id of the picture to send
 
 if not BOT_TOKEN or not MONGO_URI:
     logger.error("Missing BOT_TOKEN or MONGO_URI environment variables")
@@ -124,12 +126,10 @@ def save_series_to_db(data: dict) -> str:
 
 # Parse caption like "Stranger Things | S1 | 720p" to extract info
 def parse_caption(caption: str):
-    # Simple split by |, strip whitespace
     parts = [p.strip() for p in caption.split("|")]
     if len(parts) != 3:
         return None
     series_name, season, quality = parts
-    # Normalize season to Capital S + number (ex: S1)
     season = season.upper()
     if not season.startswith("S"):
         season = "S" + season.lstrip("Season").strip()
@@ -143,7 +143,6 @@ def handle_admin_file(update: Update, context: CallbackContext) -> None:
 
     message = update.message
 
-    # Check for document or video file
     file_obj = None
     if message.document:
         file_obj = message.document
@@ -166,11 +165,9 @@ def handle_admin_file(update: Update, context: CallbackContext) -> None:
     series_name, season_key, quality_key = parsed
     file_id = file_obj.file_id
 
-    # Upsert episode with the file_id for quality
     series_name_key = series_name.strip().lower()
-    # We assign episode key based on how many episodes already in that season + 1
-    series = series_collection.find_one({"name": series_name_key})
     episodes_key = None
+    series = series_collection.find_one({"name": series_name_key})
     if series and "seasons" in series and season_key in series["seasons"]:
         existing_episodes = series["seasons"][season_key].get("episodes", {})
         episodes_list = sorted(existing_episodes.keys()) if existing_episodes else []
@@ -184,12 +181,10 @@ def handle_admin_file(update: Update, context: CallbackContext) -> None:
     else:
         episodes_key = "E1"
 
-    # Prepare update to MongoDB
     update_query = {
         f"seasons.{season_key}.episodes.{episodes_key}.qualities.{quality_key}": file_id,
         "name": series_name_key
     }
-    # Use $setOnInsert to set name only if new
     result = series_collection.update_one(
         {"name": series_name_key},
         {"$set": update_query},
@@ -200,8 +195,7 @@ def handle_admin_file(update: Update, context: CallbackContext) -> None:
         f"Added/updated episode {episodes_key} of {series_name} season {season_key} quality {quality_key} successfully."
     )
 
-
-# When user sends text message (series name) in group or PM (unchanged)
+# When user sends text message (series name) in group or PM
 def handle_series_query(update: Update, context: CallbackContext) -> None:
     if update.message.text.startswith("/"):  # Ignore commands
         return
@@ -212,12 +206,20 @@ def handle_series_query(update: Update, context: CallbackContext) -> None:
         update.message.reply_text("Sorry, series not found in database.")
         return
 
+    # Send a photo with a custom caption
+    if PIC_URL:
+        user_mention = update.message.from_user.mention_html()
+        caption = f"Hi {user_mention}, Select Season for {text.title()}"
+        context.bot.send_photo(chat_id=update.effective_chat.id, photo=PIC_URL, caption=caption, parse_mode='HTML')
+
     seasons = series.get("seasons", {})
     if not seasons:
         update.message.reply_text("No seasons found for this series.")
         return
 
     keyboard = []
+    # Add "All Episodes" button
+    keyboard.append([InlineKeyboardButton("All Episodes", callback_data=f"all_episodes|{series['name']}")])
     for season_name in sorted(seasons.keys()):
         keyboard.append(
             [InlineKeyboardButton(season_name, callback_data=f"season|{series['name']}|{season_name}")]
@@ -226,14 +228,14 @@ def handle_series_query(update: Update, context: CallbackContext) -> None:
     reply_markup = InlineKeyboardMarkup(keyboard)
     update.message.reply_text(f"Select Season for {series['name']}:", reply_markup=reply_markup)
 
-# Handle button callbacks (unchanged)
+# Handle button callbacks
 def button_handler(update: Update, context: CallbackContext) -> None:
     query = update.callback_query
     query.answer()
     data = query.data
     parts = data.split("|")
 
-    if len(parts) < 3:
+    if len(parts) < 2:
         query.edit_message_text(text="Invalid action.")
         return
 
@@ -257,6 +259,8 @@ def button_handler(update: Update, context: CallbackContext) -> None:
             return
 
         keyboard = []
+        # Add "All Episodes" button
+        keyboard.append([InlineKeyboardButton("All Episodes", callback_data=f"all_episodes|{series['name']}|{season_name}")])
         for ep_name in sorted(episodes.keys()):
             keyboard.append(
                 [InlineKeyboardButton(ep_name, callback_data=f"episode|{series['name']}|{season_name}|{ep_name}")]
@@ -297,6 +301,23 @@ def button_handler(update: Update, context: CallbackContext) -> None:
             )
         reply_markup = InlineKeyboardMarkup(keyboard)
         query.edit_message_text(text=f"Select Quality for {ep_name}:", reply_markup=reply_markup)
+
+    elif action == "all_episodes":
+        if len(parts) == 3:
+            season_name = parts[2]
+            episodes = series["seasons"].get(season_name, {}).get("episodes", {})
+            if not episodes:
+                query.edit_message_text(text="No episodes found in this season.")
+                return
+            all_episodes_text = "\n".join([f"{ep_name}: {episode['qualities']}" for ep_name, episode in episodes.items()])
+            query.edit_message_text(text=f"All Episodes for {season_name}:\n{all_episodes_text}")
+        else:
+            episodes = series.get("seasons", {})
+            all_episodes_text = []
+            for season_name, season in episodes.items():
+                for ep_name, episode in season.get("episodes", {}).items():
+                    all_episodes_text.append(f"{ep_name} in {season_name}: {episode['qualities']}")
+            query.edit_message_text(text="All Episodes:\n" + "\n".join(all_episodes_text))
 
     elif action == "quality":
         if len(parts) < 5:
@@ -352,18 +373,14 @@ def main():
     dispatcher.add_handler(CommandHandler("addseries", addseries_command))
     dispatcher.add_handler(MessageHandler(Filters.text & (~Filters.command), handle_series_query))
     dispatcher.add_handler(MessageHandler(Filters.text & (~Filters.command), handle_admin_json))
-    # Admin file upload handler with caption
     dispatcher.add_handler(MessageHandler(Filters.document | Filters.video, handle_admin_file))
 
     dispatcher.add_handler(CallbackQueryHandler(button_handler))
     dispatcher.add_error_handler(error_handler)
 
-    # For deployment port awareness (e.g., with webhooks you can adjust)
-    # But here we use polling, so port doesn't affect bot operation
     updater.start_polling()
     logger.info("Bot started.")
     updater.idle()
 
 if __name__ == '__main__':
     main()
-
