@@ -168,31 +168,47 @@ def handle_admin_file(update: Update, context: CallbackContext) -> None:
     series_name_key = series_name.strip().lower()
     episodes_key = None
     series = series_collection.find_one({"name": series_name_key})
+    
     if series and "seasons" in series and season_key in series["seasons"]:
         existing_episodes = series["seasons"][season_key].get("episodes", {})
         episodes_list = sorted(existing_episodes.keys()) if existing_episodes else []
-        next_ep_num = 1
-        for ep in episodes_list:
-            if ep.startswith("E") and ep[1:].isdigit():
-                n = int(ep[1:])
-                if n >= next_ep_num:
-                    next_ep_num = n + 1
-        episodes_key = f"E{next_ep_num}"
-    else:
-        episodes_key = "E1"
+        
+        # Check if the episode already exists
+        if episodes_list:
+            for ep in episodes_list:
+                if ep.startswith("E") and ep[1:].isdigit():
+                    episode_number = ep
+                    break
+            else:
+                episode_number = "E1"  # Default to first episode if none found
+        else:
+            episode_number = "E1"
 
-    update_query = {
-        f"seasons.{season_key}.episodes.{episodes_key}.qualities.{quality_key}": file_id,
-        "name": series_name_key
-    }
-    result = series_collection.update_one(
-        {"name": series_name_key},
-        {"$set": update_query},
-        upsert=True
-    )
+        # Update the existing episode's qualities
+        update_query = {
+            f"seasons.{season_key}.episodes.{episode_number}.qualities.{quality_key}": file_id,
+            "name": series_name_key
+        }
+        result = series_collection.update_one(
+            {"name": series_name_key},
+            {"$set": update_query},
+            upsert=True
+        )
+    else:
+        # If the series or season doesn't exist, create a new entry
+        episode_number = "E1"
+        update_query = {
+            f"seasons.{season_key}.episodes.{episode_number}.qualities.{quality_key}": file_id,
+            "name": series_name_key
+        }
+        result = series_collection.update_one(
+            {"name": series_name_key},
+            {"$set": update_query},
+            upsert=True
+        )
 
     update.message.reply_text(
-        f"Added/updated episode {episodes_key} of {series_name} season {season_key} quality {quality_key} successfully."
+        f"Added/updated episode {episode_number} of {series_name} season {season_key} quality {quality_key} successfully."
     )
 
 # When user sends text message (series name) in group or PM
@@ -247,7 +263,7 @@ def button_handler(update: Update, context: CallbackContext) -> None:
         return
 
     if action == "season":
-        if len(parts)  3:
+        if len(parts) < 3:
             query.edit_message_text(text="Invalid season action.")
             return
         season_name = parts[2]
@@ -272,7 +288,7 @@ def button_handler(update: Update, context: CallbackContext) -> None:
         query.edit_message_text(text=f"Select Episode for {season_name}:", reply_markup=reply_markup)
 
     elif action == "episode":
-        if len(parts)  4:
+        if len(parts) < 4:
             query.edit_message_text(text="Invalid episode action.")
             return
         season_name = parts[2]
@@ -320,17 +336,18 @@ def button_handler(update: Update, context: CallbackContext) -> None:
 
             for ep_name, episode in episodes.items():
                 qualities = episode.get("qualities", {})
+                quality_msgs = []
                 for quality_name, file_id_or_url in qualities.items():
-                    try:
-                        if file_id_or_url.startswith("http://") or file_id_or_url.startswith("https://"):
-                            context.bot.send_message(
-                                chat_id=user_id,
-                                text=f"{ep_name} ({season_name}) - {quality_name}:\n{file_id_or_url}"
-                            )
-                        else:
-                            context.bot.send_document(chat_id=user_id, document=file_id_or_url)
-                    except Exception as e:
-                        logger.error(f"Error sending file {ep_name} {quality_name}: {e}")
+                    if file_id_or_url.startswith("http://") or file_id_or_url.startswith("https://"):
+                        quality_msgs.append(f"{quality_name}: {file_id_or_url}")
+                    else:
+                        quality_msgs.append(f"{quality_name}: [Telegram File]")
+                text_msg = f"📺 {ep_name} ({season_name}):\n" + "\n".join(quality_msgs)
+                # Send the message
+                try:
+                    context.bot.send_message(chat_id=user_id, text=text_msg)
+                except Exception as e:
+                    logger.error(f"Failed to send all episodes message: {e}")
 
             context.bot.send_message(chat_id=chat_id, text=f"All episodes for {season_name} sent to your private chat.")
 
@@ -341,22 +358,22 @@ def button_handler(update: Update, context: CallbackContext) -> None:
                 episodes = season.get("episodes", {})
                 for ep_name, episode in episodes.items():
                     qualities = episode.get("qualities", {})
+                    quality_msgs = []
                     for quality_name, file_id_or_url in qualities.items():
-                        try:
-                            if file_id_or_url.startswith("http://") or file_id_or_url.startswith("https://"):
-                                context.bot.send_message(
-                                    chat_id=user_id,
-                                    text=f"{ep_name} ({season_name}) - {quality_name}:\n{file_id_or_url}"
-                                )
-                            else:
-                                context.bot.send_document(chat_id=user_id, document=file_id_or_url)
-                        except Exception as e:
-                            logger.error(f"Error sending file {ep_name} {quality_name}: {e}")
+                        if file_id_or_url.startswith("http://") or file_id_or_url.startswith("https://"):
+                            quality_msgs.append(f"{quality_name}: {file_id_or_url}")
+                        else:
+                            quality_msgs.append(f"{quality_name}: [Telegram File]")
+                    text_msg = f"📺 {ep_name} in {season_name}:\n" + "\n".join(quality_msgs)
+                    try:
+                        context.bot.send_message(chat_id=user_id, text=text_msg)
+                    except Exception as e:
+                        logger.error(f"Failed to send all episodes message: {e}")
 
             context.bot.send_message(chat_id=chat_id, text="All episodes for all seasons sent to your private chat.")
 
     elif action == "quality":
-        if len(parts)  5:
+        if len(parts) < 5:
             query.edit_message_text(text="Invalid quality action.")
             return
         season_name = parts[2]
