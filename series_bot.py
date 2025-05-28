@@ -308,21 +308,50 @@ def button_handler(update: Update, context: CallbackContext) -> None:
         query.edit_message_text(text=f"Select Quality for {ep_name}:", reply_markup=reply_markup)
 
     elif action == "all_seasons":
+        # Show qualities across all seasons
+        quality_set = set()
+        for season_name, season in series.get("seasons", {}).items():
+            episodes = season.get("episodes", {})
+            for ep_data in episodes.values():
+                quality_set.update(ep_data.get("qualities", {}).keys())
+
+        if not quality_set:
+            query.edit_message_text(text="No qualities found for this series.")
+            return
+
+        keyboard = [InlineKeyboardButton(q, callback_data=f"all_seasons_quality|{series['name']}|{q}") for q in sorted(quality_set)]
+        reply_markup = InlineKeyboardMarkup([[btn] for btn in keyboard])
+        query.edit_message_text(text="Select quality to send all episodes of all seasons:", reply_markup=reply_markup)
+
+    elif action == "all_seasons_quality":
         user_id = query.from_user.id
-        query.edit_message_text(text="Sending all episodes for all seasons to your private chat...")
+        if len(parts) < 3:
+            query.edit_message_text(text="Invalid action.")
+            return
+        quality = parts[2]
+
+        query.edit_message_text(text=f"Sending all episodes in {quality} for all seasons to your private chat...")
+
+        count_sent = 0
         for season_name, season in series.get("seasons", {}).items():
             episodes = season.get("episodes", {})
             for ep_name, ep_data in episodes.items():
                 qualities = ep_data.get("qualities", {})
-                for quality, file_id in qualities.items():
+                file_id = qualities.get(quality)
+                if file_id:
                     try:
                         context.bot.send_document(
                             chat_id=user_id,
                             document=file_id,
                             caption=CUSTOM_FILE_CAPTION or f"{series_name} - {season_name} - {ep_name} - {quality}",
                         )
+                        count_sent += 1
                     except Exception as e:
                         logger.error(f"Error sending file: {e}")
+        if count_sent == 0:
+            context.bot.send_message(chat_id=user_id, text=f"No episodes found for quality {quality}.")
+        else:
+            context.bot.send_message(chat_id=user_id, text=f"Sent {count_sent} episodes for quality {quality}.")
 
     elif action == "all_episodes":
         if len(parts) < 3:
