@@ -330,7 +330,7 @@ def button_handler(update: Update, context: CallbackContext) -> None:
             return
         quality = parts[2]
 
-        query.edit_message_text(text=f"Sending all episodes in {quality} for all seasons to your private chat...")
+        query.edit_message_text(text=f"Sending all episodes in {quality} for all seasons to your {user.mention} private chat...")
 
         count_sent = 0
         for season_name, season in series.get("seasons", {}).items():
