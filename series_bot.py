@@ -330,7 +330,7 @@ def button_handler(update: Update, context: CallbackContext) -> None:
             return
         quality = parts[2]
 
-        query.edit_message_text(text=f"Sending all episodes in {quality} for all seasons to your {user_mention} private chat...😁")
+        query.edit_message_text(text=f"Sending all episodes in {quality} for all seasons to your {user_mention} private chat...😁 \n \n {user_mention} <a href='https://t.me/imdbtelemc_bot'> check pm </a>")
 
         count_sent = 0
         for season_name, season in series.get("seasons", {}).items():
@@ -343,7 +343,7 @@ def button_handler(update: Update, context: CallbackContext) -> None:
                         context.bot.send_document(
                             chat_id=user_id,
                             document=file_id,
-                            caption=CUSTOM_FILE_CAPTION or f"{series_name} - {season_name} - {ep_name} - {quality}",
+                            caption=CUSTOM_FILE_CAPTION or f"{series_name} - {season_name} - {ep_name} - {quality}\n \n <a href="https://t.me/Imdbtelemc_bot">Visit Example</a>",
                         )
                         count_sent += 1
                     except Exception as e:
