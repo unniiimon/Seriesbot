@@ -330,7 +330,7 @@ def button_handler(update: Update, context: CallbackContext) -> None:
             return
         quality = parts[2]
 
-        query.edit_message_text(text=f"Sending all episodes in {quality} for all seasons to your {user.mention} private chat...")
+        query.edit_message_text(text=f"Sending all episodes in {quality} for all seasons to your {user_mention} private chat...😁")
 
         count_sent = 0
         for season_name, season in series.get("seasons", {}).items():
@@ -379,7 +379,7 @@ def button_handler(update: Update, context: CallbackContext) -> None:
         season = series.get("seasons", {}).get(season_name, {})
         episodes = season.get("episodes", {})
 
-        query.edit_message_text(text=f"Sending all episodes in {quality} for season {season_name} to your private chat...")
+        query.edit_message_text(text=f"Sending all episodes in {quality} for season {season_name} to your {user_mention} private chat...😁")
 
         for ep_name, ep_data in episodes.items():
             qualities = ep_data.get("qualities", {})
@@ -389,7 +389,7 @@ def button_handler(update: Update, context: CallbackContext) -> None:
                     context.bot.send_document(
                         chat_id=user_id,
                         document=file_id,
-                        caption=CUSTOM_FILE_CAPTION or f"{series_name} - {season_name} - {ep_name} - {quality}",
+                        caption=CUSTOM_FILE_CAPTION or f"{series_name} - {season_name} - {ep_name} - {quality} <a href="https://t.me/mcserieshub">🔻JOIN OUR GROUP 🔺</a>",
                     )
                 except Exception as e:
                     logger.error(f"Error sending file: {e}")
