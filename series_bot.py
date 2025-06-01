@@ -1,109 +1,212 @@
+import logging
 import os
-from pyrogram import Client, filters
-from pyrogram.types import Message
+from telegram import (
+    Update,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    ChatMember,
+)
+from telegram.ext import (
+    Updater,
+    CommandHandler,
+    MessageHandler,
+    Filters,
+    CallbackQueryHandler,
+    CallbackContext,
+)
 from pymongo import MongoClient
-from dotenv import load_dotenv
+from telegram.error import BadRequest
 
-# Load environment variables
-load_dotenv()
+logging.basicConfig(
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
+)
+logger = logging.getLogger(__name__)
 
-API_ID = int(os.getenv("API_ID"))
-API_HASH = os.getenv("API_HASH")
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-MONGO_URL = os.getenv("MONGO_URL")
+BOT_TOKEN = os.environ.get("BOT_TOKEN")
+MONGO_URI = os.environ.get("MONGO_URI")
+FORCE_SUB_CHANNEL = os.environ.get("FORCE_SUB_CHANNEL")  # Optional
+CUSTOM_FILE_CAPTION = os.environ.get("CUSTOM_FILE_CAPTION")
+PIC_URL = os.environ.get("PIC_URL")
 
-# Admin user ID
-ADMINS = [int(admin) for admin in os.getenv("ADMINS", "").split()]
+if not BOT_TOKEN or not MONGO_URI:
+    logger.error("Missing BOT_TOKEN or MONGO_URI environment variables")
+    exit(1)
 
-# Pyrogram client
-app = Client("series_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
+client = MongoClient(
+    MONGO_URI, tls=True, tlsAllowInvalidCertificates=True, serverSelectionTimeoutMS=5000
+)
+db = client.series_bot_db
+series_collection = db.series
 
-# MongoDB setup
-mongo = MongoClient(MONGO_URL)
-db = mongo["seriesbot"]
-episodes = db["episodes"]
-episode_counter = db["episode_counters"]
+ADMIN_IDS = {5387919847}  # Replace with your Telegram user ID(s)
 
-# Per-user session to track uploads
-app.session_data = {}
+def is_admin(user_id: int) -> bool:
+    return user_id in ADMIN_IDS
 
-@app.on_message(filters.command("start") & filters.private)
-async def start_cmd(client, message: Message):
-    await message.reply("👋 Welcome to the Series Bot!\nUse /add command to upload a new episode.")
-
-@app.on_message(filters.command("add") & filters.private & filters.user(ADMINS))
-async def add_episode(client, message: Message):
+def force_subscribe_check(update: Update, context: CallbackContext) -> bool:
+    if not FORCE_SUB_CHANNEL:
+        return True
+    user_id = update.effective_user.id
     try:
-        args = message.text.split(" ", 1)[1]
-        parts = [x.strip() for x in args.split("|")]
-        if len(parts) != 3:
-            return await message.reply("❗ Format: /add Series Name | Season Number | Quality")
+        member = context.bot.get_chat_member(chat_id=FORCE_SUB_CHANNEL, user_id=user_id)
+        return member.status in [ChatMember.MEMBER, ChatMember.ADMINISTRATOR, ChatMember.CREATOR]
+    except BadRequest as e:
+        logger.error(f"Force subscribe error: {e}")
+        return False
 
-        series_name, season_str, quality = parts
-        season = int(season_str)
-
-        counter = episode_counter.find_one({"series": series_name, "season": season})
-        if not counter:
-            episode = 1
-            episode_counter.insert_one({"series": series_name, "season": season, "episode": episode})
-        else:
-            episode = counter["episode"]
-
-        app.session_data[message.from_user.id] = {
-            "series": series_name,
-            "season": season,
-            "episode": episode,
-            "quality": quality
-        }
-
-        await message.reply(
-            f"✅ Now send the file for:\n📺 {series_name}\n🎞 Season {season}, Episode {episode}\n🎚 Quality: {quality}"
-        )
-
-    except Exception as e:
-        await message.reply(f"⚠️ Error: {e}")
-
-@app.on_message(filters.document & filters.private & filters.user(ADMINS))
-async def handle_file(client, message: Message):
-    data = app.session_data.get(message.from_user.id)
-    if not data:
-        return await message.reply("❗ Use /add before uploading the file.")
-
-    series, season, episode, quality = data["series"], data["season"], data["episode"], data["quality"]
-    doc = message.document
-
-    file_info = {
-        "file_id": doc.file_id,
-        "file_name": doc.file_name,
-        "file_size": doc.file_size
-    }
-
-    existing = episodes.find_one({"series": series, "season": season, "episode": episode})
-
-    if existing:
-        existing["qualities"][quality] = file_info
-        episodes.replace_one({"_id": existing["_id"]}, existing)
-    else:
-        new_doc = {
-            "series": series,
-            "season": season,
-            "episode": episode,
-            "title": f"{series} - S{season:02}E{episode:02}",
-            "qualities": {
-                quality: file_info
-            }
-        }
-        episodes.insert_one(new_doc)
-
-    await message.reply(f"✅ Uploaded {series} - S{season:02}E{episode:02} [{quality}]")
-
-    episode_counter.update_one(
-        {"series": series, "season": season},
-        {"$inc": {"episode": 1}}
+def start(update: Update, context: CallbackContext) -> None:
+    if not force_subscribe_check(update, context):
+        update.message.reply_text(f"Please join {FORCE_SUB_CHANNEL} to use this bot.")
+        return
+    update.message.reply_text(
+        "Welcome to the Series Bot!\n\n"
+        "Admins: Use /add series_name|season|quality\n"
+        "Then upload files in correct order — no caption needed on files.\n"
+        "Users: Just send series name to browse."
     )
 
-    del app.session_data[message.from_user.id]
+def add_series_command(update: Update, context: CallbackContext) -> None:
+    user_id = update.effective_user.id
+    if not is_admin(user_id):
+        update.message.reply_text("You are not authorized.")
+        return
+    if context.args:
+        parts = " ".join(context.args).split("|")
+        if len(parts) != 3:
+            update.message.reply_text("Use: /add series_name|season|quality")
+            return
+        series_name, season, quality = [p.strip() for p in parts]
+        season = season.upper()
+        if not season.startswith("S"):
+            season = "S" + season.lstrip("Season").strip()
+        context.user_data["upload_series"] = series_name.lower()
+        context.user_data["upload_season"] = season
+        context.user_data["upload_quality"] = quality
+        context.user_data["upload_episode"] = get_next_episode_number(series_name.lower(), season)
+        update.message.reply_text(
+            f"Context set to {series_name} - {season} - {quality}. "
+            f"Upload files now. Episode will auto-increment only once per episode."
+        )
+    else:
+        update.message.reply_text("Use: /add series_name|season|quality")
+
+def get_next_episode_number(series_name, season):
+    series = series_collection.find_one({"name": series_name})
+    if not series or "seasons" not in series or season not in series["seasons"]:
+        return 1
+    episodes = series["seasons"][season].get("episodes", {})
+    max_ep = 0
+    for ep in episodes.keys():
+        try:
+            ep_num = int(ep.lstrip("E"))
+            if ep_num > max_ep:
+                max_ep = ep_num
+        except:
+            continue
+    return max_ep + 1
+
+def handle_admin_file(update: Update, context: CallbackContext) -> None:
+    user_id = update.effective_user.id
+    if not is_admin(user_id):
+        return
+    message = update.message
+    file_obj = message.document or message.video
+    if not file_obj:
+        update.message.reply_text("Send a document or video file.")
+        return
+
+    series = context.user_data.get("upload_series")
+    season = context.user_data.get("upload_season")
+    quality = context.user_data.get("upload_quality")
+    episode = context.user_data.get("upload_episode")
+
+    if not all([series, season, quality, episode]):
+        update.message.reply_text("Use /add to set series, season, and quality before uploading files.")
+        return
+
+    episode_key = f"E{episode}"
+    field_path = f"seasons.{season}.episodes.{episode_key}.qualities.{quality}"
+
+    # Check if this quality already exists
+    existing = series_collection.find_one({
+        "name": series,
+        field_path: {"$exists": True}
+    })
+
+    if existing:
+        update.message.reply_text(f"Quality '{quality}' already exists for Episode {episode_key}. Not saved again.")
+        return
+
+    file_id = file_obj.file_id
+    update_query = {
+        field_path: file_id,
+        "name": series
+    }
+
+    series_collection.update_one({"name": series}, {"$set": update_query}, upsert=True)
+    update.message.reply_text(f"Saved: {series}, {season}, {episode_key}, {quality}.")
+
+    # Only increment episode after first successful save (i.e. new episode only)
+    context.user_data["upload_episode"] = episode + 1
+
+def handle_series_query(update: Update, context: CallbackContext):
+    if update.message.text.startswith("/"):
+        return
+    text = update.message.text.strip().lower()
+    series = series_collection.find_one({"name": text})
+    if not series:
+        update.message.reply_text("Series not found.")
+        return
+
+    if PIC_URL:
+        user_mention = update.message.from_user.mention_html()
+        cap = f"Hi {user_mention}, Select Season for {text.title()}"
+        context.bot.send_photo(update.effective_chat.id, PIC_URL, caption=cap, parse_mode='HTML')
+
+    seasons = series.get("seasons", {})
+    if not seasons:
+        update.message.reply_text("No seasons found.")
+        return
+    buttons = [[InlineKeyboardButton("All Seasons", callback_data=f"all_seasons|{series['name']}")]]
+    for season_name in sorted(seasons.keys()):
+        buttons.append([InlineKeyboardButton(season_name, callback_data=f"season|{series['name']}|{season_name}")])
+
+    update.message.reply_text(f"Select Season for {series['name']}:", reply_markup=InlineKeyboardMarkup(buttons))
+
+def button_handler(update: Update, context: CallbackContext):
+    query = update.callback_query
+    query.answer()
+    data = query.data
+    parts = data.split("|")
+
+    if len(parts) < 2:
+        query.edit_message_text("Invalid action.")
+        return
+    action, series_name = parts[0], parts[1]
+    series = series_collection.find_one({"name": series_name.lower()})
+    if not series:
+        query.edit_message_text("Series not found.")
+        return
+
+    # You can expand this logic as needeokkkkkd
+
+def error_handler(update: object, context: CallbackContext) -> None:
+    logger.error(msg="Exception while handling an update:", exc_info=context.error)
+
+def main():
+    updater = Updater(BOT_TOKEN)
+    dp = updater.dispatcher
+
+    dp.add_handler(CommandHandler("start", start))
+    dp.add_handler(CommandHandler("add", add_series_command))
+    dp.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_series_query))
+    dp.add_handler(MessageHandler(Filters.document | Filters.video, handle_admin_file))
+    dp.add_handler(CallbackQueryHandler(button_handler))
+    dp.add_error_handler(error_handler)
+
+    updater.start_polling()
+    logger.info("Bot started.")
+    updater.idle()
 
 if __name__ == "__main__":
-    print("Bot is running...")
-    app.run()
+    main()
