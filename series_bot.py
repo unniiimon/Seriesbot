@@ -143,6 +143,15 @@ def handle_admin_file(update: Update, context: CallbackContext) -> None:
 
     update.message.reply_text(f"Added {series_name} season {season_key} episode {episode_key} quality {quality_key}.")
 
+def handle_message(update: Update, context: CallbackContext) -> None:
+    if not force_subscribe_check(update, context):
+        update.message.reply_text(
+            f"Please join our channel {FORCE_SUB_CHANNEL} to use this bot."
+        )
+        return
+    if update.message.text and not update.message.text.startswith("/"):
+        handle_series_query(update, context)
+
 def handle_series_query(update: Update, context: CallbackContext) -> None:
     if update.message.text.startswith("/"):
         return
@@ -221,17 +230,17 @@ def button_handler(update: Update, context: CallbackContext) -> None:
                 if file_id:
                     try:
                         context.bot.send_document(
-                            user_id,
+                            chat_id=user_id,
                             document=file_id,
-                            caption=CUSTOM_FILE_CAPTION or f"{series_name} - {season_name} - {ep_name} - {quality}"
+                            caption=CUSTOM_FILE_CAPTION or f"{series_name} - {season_name} - {ep_name} - {quality}",
                         )
                         count_sent += 1
                     except Exception as e:
                         logger.error(f"Error sending file: {e}")
         if count_sent == 0:
-            context.bot.send_message(user_id, f"No episodes found for quality {quality}.")
+            context.bot.send_message(chat_id=user_id, text=f"No episodes found for quality {quality}.")
         else:
-            context.bot.send_message(user_id, f"Sent {count_sent} episodes for quality {quality}.")
+            context.bot.send_message(chat_id=user_id, text=f"Sent {count_sent} episodes for quality {quality}.")
 
     elif action == "all_episodes":
         if len(parts) < 3:
@@ -262,9 +271,9 @@ def button_handler(update: Update, context: CallbackContext) -> None:
             if file_id:
                 try:
                     context.bot.send_document(
-                        user_id,
+                        chat_id=user_id,
                         document=file_id,
-                        caption=CUSTOM_FILE_CAPTION or f"{series_name} - {season_name} - {ep_name} - {quality}"
+                        caption=CUSTOM_FILE_CAPTION or f"{series_name} - {season_name} - {ep_name} - {quality}",
                     )
                 except Exception as e:
                     logger.error(f"Error sending file: {e}")
@@ -300,7 +309,7 @@ def button_handler(update: Update, context: CallbackContext) -> None:
                 keyboard = [InlineKeyboardButton(f"Download {ep_name} in {quality_name}", url=file_id_or_url)]
                 query.edit_message_text(f"Download link for {ep_name} in {quality_name}:", reply_markup=InlineKeyboardMarkup([[keyboard[0]]]))
             else:
-                context.bot.send_document(user_id=query.from_user.id, document=file_id_or_url, caption=CUSTOM_FILE_CAPTION)
+                context.bot.send_document(chat_id=query.from_user.id, document=file_id_or_url, caption=CUSTOM_FILE_CAPTION)
                 query.edit_message_text(f"Sent {ep_name} in {quality_name} to your private chat.")
         except Exception as e:
             logger.error(f"Failed to send file: {e}")
@@ -327,7 +336,6 @@ def main():
     updater.start_polling()
     logger.info("Bot started.")
     updater.idle()
-
 
 if __name__ == "__main__":
     main()
