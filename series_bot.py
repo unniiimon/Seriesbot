@@ -195,7 +195,7 @@ def button_handler(update: Update, context: CallbackContext) -> None:
         query.edit_message_text(text="Series data not found.")
         return
 
-    # Handle other actions (season, all seasons, etc.) as before...
+    # Additional action handling (e.g., show season contents) can be added here
 
 def error_handler(update: object, context: CallbackContext) -> None:
     logger.error(msg="Exception while handling an update:", exc_info=context.error)
@@ -206,9 +206,8 @@ def main():
 
     dispatcher.add_handler(CommandHandler("start", start))
     dispatcher.add_handler(CommandHandler("add", add_series_command))
-    dispatcher.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_message))
+    dispatcher.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_series_query))
     dispatcher.add_handler(MessageHandler(Filters.document | Filters.video, handle_admin_file))
-
     dispatcher.add_handler(CallbackQueryHandler(button_handler))
     dispatcher.add_error_handler(error_handler)
 
