@@ -187,7 +187,7 @@ def main():
 
     dp.add_handler(CommandHandler("start", start))
     dp.add_handler(CommandHandler("add", add_series_command))
-    dp.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_message))
+    dp.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_series_query))
     dp.add_handler(MessageHandler(Filters.document | Filters.video, handle_admin_file))
     dp.add_handler(CallbackQueryHandler(button_handler))
     dp.add_error_handler(error_handler)
@@ -195,6 +195,6 @@ def main():
     updater.start_polling()
     logger.info("Bot started.")
     updater.idle()
-
+    
 if __name__ == "__main__":
     main()
