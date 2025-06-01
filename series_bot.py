@@ -64,38 +64,47 @@ def start(update: Update, context: CallbackContext) -> None:
         "Users: Send series name to browse."
     )
 
-def set_series(update: Update, context: CallbackContext):
-    if not is_admin(update.effective_user.id):
-        update.message.reply_text("You are not authorized.")
+def add_series_command(update: Update, context: CallbackContext) -> None:
+    user_id = update.effective_user.id
+    if not is_admin(user_id):
+        update.message.reply_text("You are not authorized to add series.")
         return
-    args = context.args
-    if not args:
-        update.message.reply_text("Usage: /setseries series_name|season")
-        return
-    text = " ".join(args)
-    parts = [p.strip() for p in text.split("|")]
-    if len(parts) != 2:
-        update.message.reply_text("Usage: /setseries series_name|season")
-        return
-    series_name, season = parts
-    season = season.upper()
-    if not season.startswith("S"):
-        season = "S" + season.lstrip("Season").strip()
-    context.user_data['upload_series'] = series_name.lower()
-    context.user_data['upload_season'] = season
-    update.message.reply_text(f"Set series to '{series_name}', season '{season}'. Now set episode with /setepisode.")
+    if context.args:
+        series_info = " ".join(context.args)
+        parts = [p.strip() for p in series_info.split("|")]
+        if len(parts) != 3:
+            update.message.reply_text("Use format: /add series_name|season|quality")
+            return
+        series_name, season, quality = parts
+        season = season.upper()
+        if not season.startswith("S"):
+            season = "S" + season.lstrip("Season").strip()
+        series_name_key = series_name.strip().lower()
+        context.user_data['upload_series'] = series_name_key
+        context.user_data['upload_season'] = season
+        context.user_data['upload_quality'] = quality
+        context.user_data['upload_next_episode'] = get_next_episode_number(series_name_key, season)
+        update.message.reply_text(
+            f"Upload files for {series_name} Season {season} Quality {quality} starting from episode E{context.user_data['upload_next_episode']}."
+        )
+    else:
+        update.message.reply_text("Use format: /add series_name|season|quality")
 
-def set_episode(update: Update, context: CallbackContext):
-    if not is_admin(update.effective_user.id):
-        update.message.reply_text("You are not authorized.")
-        return
-    args = context.args
-    if not args or not args[0].isdigit():
-        update.message.reply_text("Usage: /setepisode episode_number (number)")
-        return
-    episode_num = int(args[0])
-    context.user_data['upload_episode'] = f"E{episode_num}"
-    update.message.reply_text(f"Set episode to {context.user_data['upload_episode']}. Now upload files with quality caption.")
+def get_next_episode_number(series_name_key, season_key):
+    series = series_collection.find_one({"name": series_name_key})
+    if series and "seasons" in series and season_key in series["seasons"]:
+        episodes = series["seasons"][season_key].get("episodes", {})
+        highest_ep = 0
+        for ep in episodes.keys():
+            try:
+                ep_num = int(ep.lstrip("E"))
+                if ep_num > highest_ep:
+                    highest_ep = ep_num
+            except:
+                continue
+        return highest_ep + 1
+    else:
+        return 1
 
 def handle_admin_file(update: Update, context: CallbackContext):
     if not is_admin(update.effective_user.id):
@@ -132,6 +141,13 @@ def handle_admin_file(update: Update, context: CallbackContext):
     update.message.reply_text(
         f"Added file for {series_name} season {season_key} episode {episode_key} quality {quality_key}."
     )
+
+def handle_message(update: Update, context: CallbackContext):
+    if not force_subscribe_check(update, context):
+        update.message.reply_text(f"Please join {FORCE_SUB_CHANNEL} to use this bot.")
+        return
+    if update.message.text and not update.message.text.startswith("/"):
+        handle_series_query(update, context)
 
 def handle_series_query(update: Update, context: CallbackContext):
     if update.message.text.startswith("/"):
@@ -211,17 +227,17 @@ def button_handler(update: Update, context: CallbackContext):
                 if file_id:
                     try:
                         context.bot.send_document(
-                            user_id,
+                            chat_id=user_id,
                             document=file_id,
-                            caption=CUSTOM_FILE_CAPTION or f"{series_name} - {season_name} - {ep_name} - {quality}"
+                            caption=CUSTOM_FILE_CAPTION or f"{series_name} - {season_name} - {ep_name} - {quality}",
                         )
                         count_sent += 1
                     except Exception as e:
                         logger.error(f"Error sending file: {e}")
         if count_sent == 0:
-            context.bot.send_message(user_id, f"No episodes found for quality {quality}.")
+            context.bot.send_message(chat_id=user_id, text=f"No episodes found for quality {quality}.")
         else:
-            context.bot.send_message(user_id, f"Sent {count_sent} episodes for quality {quality}.")
+            context.bot.send_message(chat_id=user_id, text=f"Sent {count_sent} episodes for quality {quality}.")
 
     elif action == "all_episodes":
         if len(parts) < 3:
@@ -252,9 +268,9 @@ def button_handler(update: Update, context: CallbackContext):
             if file_id:
                 try:
                     context.bot.send_document(
-                        user_id,
+                        chat_id=user_id,
                         document=file_id,
-                        caption=CUSTOM_FILE_CAPTION or f"{series_name} - {season_name} - {ep_name} - {quality}"
+                        caption=CUSTOM_FILE_CAPTION or f"{series_name} - {season_name} - {ep_name} - {quality}",
                     )
                 except Exception as e:
                     logger.error(f"Error sending file: {e}")
@@ -290,7 +306,7 @@ def button_handler(update: Update, context: CallbackContext):
                 keyboard = [InlineKeyboardButton(f"Download {ep_name} in {quality_name}", url=file_id_or_url)]
                 query.edit_message_text(f"Download link for {ep_name} in {quality_name}:", reply_markup=InlineKeyboardMarkup([[keyboard[0]]]))
             else:
-                context.bot.send_document(user_id=query.from_user.id, document=file_id_or_url, caption=CUSTOM_FILE_CAPTION)
+                context.bot.send_document(chat_id=query.from_user.id, document=file_id_or_url, caption=CUSTOM_FILE_CAPTION)
                 query.edit_message_text(f"Sent {ep_name} in {quality_name} to your private chat.")
         except Exception as e:
             logger.error(f"Failed to send file: {e}")
@@ -307,11 +323,10 @@ def main():
     dispatcher = updater.dispatcher
 
     dispatcher.add_handler(CommandHandler("start", start))
-    dispatcher.add_handler(CommandHandler("add", add_series_command))
-
+    dispatcher.add_handler(CommandHandler("setseries", set_series))
+    dispatcher.add_handler(CommandHandler("setepisode", set_episode))
     dispatcher.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_message))
     dispatcher.add_handler(MessageHandler(Filters.document | Filters.video, handle_admin_file))
-
     dispatcher.add_handler(CallbackQueryHandler(button_handler))
     dispatcher.add_error_handler(error_handler)
 
