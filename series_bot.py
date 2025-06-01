@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 MONGO_URI = os.environ.get("MONGO_URI")
 FORCE_SUB_CHANNEL = os.environ.get("FORCE_SUB_CHANNEL")  # Optional
-CUSTOM_FILE_CAPTION = os.environ.get("CUSTOM_FILE_CAPTION")
+CUSTOM_FILE_CAPTION = os.environ.get("CUSTOM_FILE_CAPTION")  # Optional
 PIC_URL = os.environ.get("PIC_URL")
 
 if not BOT_TOKEN or not MONGO_URI:
@@ -85,7 +85,7 @@ def add_series_command(update: Update, context: CallbackContext) -> None:
         context.user_data["upload_episode"] = get_next_episode_number(series_name.lower(), season)
         update.message.reply_text(
             f"Context set to {series_name} - {season} - {quality}. "
-            f"Upload files now. Episode will auto-increment only once per episode."
+            f"Upload files now. Episode will auto-increment from E{context.user_data['upload_episode']}."
         )
     else:
         update.message.reply_text("Use: /add series_name|season|quality")
@@ -109,45 +109,63 @@ def handle_admin_file(update: Update, context: CallbackContext) -> None:
     user_id = update.effective_user.id
     if not is_admin(user_id):
         return
+
     message = update.message
     file_obj = message.document or message.video
     if not file_obj:
         update.message.reply_text("Send a document or video file.")
         return
 
-    series = context.user_data.get("upload_series")
+    series_name = context.user_data.get("upload_series")
     season = context.user_data.get("upload_season")
     quality = context.user_data.get("upload_quality")
-    episode = context.user_data.get("upload_episode")
+    episode_num = context.user_data.get("upload_episode")
 
-    if not all([series, season, quality, episode]):
+    if not all([series_name, season, quality, episode_num]):
         update.message.reply_text("Use /add to set series, season, and quality before uploading files.")
         return
 
-    episode_key = f"E{episode}"
-    field_path = f"seasons.{season}.episodes.{episode_key}.qualities.{quality}"
-
-    # Check if this quality already exists
-    existing = series_collection.find_one({
-        "name": series,
-        field_path: {"$exists": True}
-    })
-
-    if existing:
-        update.message.reply_text(f"Quality '{quality}' already exists for Episode {episode_key}. Not saved again.")
-        return
-
     file_id = file_obj.file_id
+    episode_key = f"E{episode_num}"
+
+    # Check if episode exists
+    series = series_collection.find_one({"name": series_name})
+    if series and "seasons" in series and season in series["seasons"]:
+        existing_episodes = series["seasons"][season].get("episodes", {})
+        if episode_key in existing_episodes:
+            # Update existing episode with new quality
+            update_query = {
+                f"seasons.{season}.episodes.{episode_key}.qualities.{quality}": file_id
+            }
+            series_collection.update_one(
+                {"name": series_name},
+                {"$set": update_query}
+            )
+            update.message.reply_text(
+                f"✅ Updated quality: {series_name.title()} {season}{episode_key} ({quality})"
+            )
+            return  # Don't increment episode
+
+    # Create new episode
     update_query = {
-        field_path: file_id,
-        "name": series
+        f"seasons.{season}.episodes.{episode_key}.qualities.{quality}": file_id,
+        "name": series_name
     }
+    series_collection.update_one(
+        {"name": series_name},
+        {"$set": update_query},
+        upsert=True
+    )
+    update.message.reply_text(
+        f"✅ Saved: {series_name.title()} {season}{episode_key} ({quality})"
+    )
+    context.user_data["upload_episode"] = episode_num + 1  # Increment for next upload
 
-    series_collection.update_one({"name": series}, {"$set": update_query}, upsert=True)
-    update.message.reply_text(f"Saved: {series}, {season}, {episode_key}, {quality}.")
-
-    # Only increment episode after first successful save (i.e. new episode only)
-    context.user_data["upload_episode"] = episode + 1
+def done_command(update: Update, context: CallbackContext) -> None:
+    if not is_admin(update.effective_user.id):
+        return
+    context.user_data.clear()
+    update.message.reply_text("🚮 Upload session cleared. Use /add to start a new series.")
 
 def handle_series_query(update: Update, context: CallbackContext):
     if update.message.text.startswith("/"):
@@ -188,7 +206,8 @@ def button_handler(update: Update, context: CallbackContext):
         query.edit_message_text("Series not found.")
         return
 
-    # You can expand this logic as needeokkkkkd
+    # implement actions (season, all_seasons, all_episodes, all_quality, episode, quality)
+    # ... similar to previous implementations ...
 
 def error_handler(update: object, context: CallbackContext) -> None:
     logger.error(msg="Exception while handling an update:", exc_info=context.error)
@@ -199,6 +218,7 @@ def main():
 
     dp.add_handler(CommandHandler("start", start))
     dp.add_handler(CommandHandler("add", add_series_command))
+    dp.add_handler(CommandHandler("done", done_command))
     dp.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_series_query))
     dp.add_handler(MessageHandler(Filters.document | Filters.video, handle_admin_file))
     dp.add_handler(CallbackQueryHandler(button_handler))
@@ -207,6 +227,6 @@ def main():
     updater.start_polling()
     logger.info("Bot started.")
     updater.idle()
-
+    
 if __name__ == "__main__":
     main()
