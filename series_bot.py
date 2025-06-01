@@ -19,7 +19,7 @@ from telegram.error import BadRequest
 
 # Enable logging
 logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
@@ -29,7 +29,6 @@ PORT = int(os.environ.get("PORT", "8443"))
 PIC_URL = os.environ.get("PIC_URL")
 FORCE_SUB_CHANNEL = os.environ.get("FORCE_SUB_CHANNEL")  # e.g. @YourChannel
 CUSTOM_FILE_CAPTION = os.environ.get("CUSTOM_FILE_CAPTION")  # Optional
-
 
 if not BOT_TOKEN or not MONGO_URI:
     logger.error("Missing BOT_TOKEN or MONGO_URI environment variables")
@@ -43,8 +42,10 @@ series_collection = db.series
 
 ADMIN_IDS = {5387919847}  # Replace with your Telegram user ID(s)
 
+
 def is_admin(user_id: int) -> bool:
     return user_id in ADMIN_IDS
+
 
 def force_subscribe_check(update: Update, context: CallbackContext) -> bool:
     if not FORCE_SUB_CHANNEL:
@@ -60,6 +61,7 @@ def force_subscribe_check(update: Update, context: CallbackContext) -> bool:
         logger.error(f"Force subscribe error: {e}")
         return False
 
+
 def start(update: Update, context: CallbackContext) -> None:
     if not force_subscribe_check(update, context):
         update.message.reply_text(
@@ -73,6 +75,7 @@ def start(update: Update, context: CallbackContext) -> None:
         "Admins: Use the command '/add series_name|season|quality' to add episodes.\n"
         "Then send the series files in the correct order."
     )
+
 
 def add_series_command(update: Update, context: CallbackContext) -> None:
     user_id = update.effective_user.id
@@ -102,6 +105,24 @@ def add_series_command(update: Update, context: CallbackContext) -> None:
     else:
         update.message.reply_text("Please provide series information in the format: /add series_name|season|quality")
 
+
+def get_next_episode_number(series_name_key, season_key):
+    series = series_collection.find_one({"name": series_name_key})
+    if series and "seasons" in series and season_key in series["seasons"]:
+        episodes = series["seasons"][season_key].get("episodes", {})
+        highest_ep = 0
+        for ep in episodes.keys():
+            try:
+                ep_num = int(ep.lstrip("E"))
+                if ep_num > highest_ep:
+                    highest_ep = ep_num
+            except:
+                continue
+        return highest_ep + 1
+    else:
+        return 1
+
+
 def handle_admin_file(update: Update, context: CallbackContext) -> None:
     user_id = update.effective_user.id
     if not is_admin(user_id):
@@ -124,36 +145,25 @@ def handle_admin_file(update: Update, context: CallbackContext) -> None:
     
     file_id = file_obj.file_id
 
-    # Determine next episode number for the season and quality
-    next_episode_num = 1
-    series = series_collection.find_one({"name": series_name})
-    if series and "seasons" in series and season_key in series["seasons"]:
-        episodes = series["seasons"][season_key].get("episodes", {})
-        highest_ep = 0
-        for ep in episodes.keys():
-            try:
-                ep_num = int(ep.lstrip("E"))
-                if ep_num > highest_ep:
-                    highest_ep = ep_num
-            except:
-                continue
-        next_episode_num = highest_ep + 1
+    series_name_key = series_name.strip().lower()
 
-    episode_key = f"E{next_episode_num}"
+    episode_number = get_next_episode_number(series_name_key, season_key)
+    episode_key = f"E{episode_number}"
 
     update_query = {
         f"seasons.{season_key}.episodes.{episode_key}.qualities.{quality_key}": file_id,
-        "name": series_name,
+        "name": series_name_key,
     }
     series_collection.update_one(
-        {"name": series_name},
+        {"name": series_name_key},
         {"$set": update_query},
-        upsert=True
+        upsert=True,
     )
 
     update.message.reply_text(
-        f"Added {series_name} season {season_key} episode {episode_key} quality {quality_key} successfully."
+        f"Added file for {series_name} season {season_key} episode {episode_key} quality {quality_key}."
     )
+
 
 def handle_message(update: Update, context: CallbackContext) -> None:
     if not force_subscribe_check(update, context):
@@ -163,6 +173,7 @@ def handle_message(update: Update, context: CallbackContext) -> None:
         return
     if update.message.text and not update.message.text.startswith("/"):
         handle_series_query(update, context)
+
 
 def handle_series_query(update: Update, context: CallbackContext) -> None:
     if update.message.text.startswith("/"):
@@ -198,6 +209,7 @@ def handle_series_query(update: Update, context: CallbackContext) -> None:
     update.message.reply_text(
         f"Select Season for {series['name']}:", reply_markup=reply_markup
     )
+
 
 def button_handler(update: Update, context: CallbackContext) -> None:
     query = update.callback_query
@@ -335,9 +347,7 @@ def button_handler(update: Update, context: CallbackContext) -> None:
             query.edit_message_text(text="No qualities found for this episode.")
             return
 
-        keyboard = [
-            InlineKeyboardButton(q, callback_data=f"quality|{series['name']}|{season_name}|{ep_name}|{q}") for q in sorted(qualities.keys())
-        ]
+        keyboard = [InlineKeyboardButton(q, callback_data=f"quality|{series['name']}|{season_name}|{ep_name}|{q}") for q in sorted(qualities.keys())]
         reply_markup = InlineKeyboardMarkup([[btn] for btn in keyboard])
         query.edit_message_text(text=f"Select Quality for {ep_name}:", reply_markup=reply_markup)
 
