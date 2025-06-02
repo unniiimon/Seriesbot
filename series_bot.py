@@ -114,15 +114,31 @@ def next_quality_command(update: Update, context: CallbackContext) -> None:
         return
     if context.args:
         parts = " ".join(context.args).split("|")
-        if len(parts) != 2:
+        if len(parts) == 2:
+            series_name, quality = [p.strip() for p in parts]
+            series_name_key = series_name.lower()
+        elif len(parts) == 1:
+            quality = parts[0].strip()
+            series_name_key = context.user_data.get('upload_series')
+            if not series_name_key:
+                update.message.reply_text("Current series not set. Use /add first with series_name|season|quality")
+                return
+        else:
             update.message.reply_text("Use format: /n series_name|quality")
             return
-        series_name, quality = [p.strip() for p in parts]
-        context.user_data['upload_series'] = series_name.lower()
+        
+        # Season must be already set, else error
+        season_key = context.user_data.get('upload_season')
+        if not season_key:
+            update.message.reply_text("Season not set. Use /add with series_name|season|quality to set the season.")
+            return
+
+        # Reset quality and reset episode counter to 1 so files align
+        context.user_data['upload_series'] = series_name_key
         context.user_data['upload_quality'] = quality
-        update.message.reply_text(
-            f"Next quality set to {quality} for series {series_name}. Upload files now."
-        )
+        context.user_data['upload_episode'] = 1  # Always reset to 1 for new quality
+
+        update.message.reply_text(f"Quality changed to {quality} for series {series_name_key}. Episode counter reset to 1. Upload files now.")
     else:
         update.message.reply_text("Use format: /n series_name|quality")
 
