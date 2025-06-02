@@ -206,7 +206,7 @@ def button_handler(update: Update, context: CallbackContext):
     data = query.data
     parts = data.split("|")
 
-    if len(parts)  2:
+    if len(parts) < 2:  # Corrected line
         query.edit_message_text(text="Invalid action.")
         return
 
@@ -218,7 +218,7 @@ def button_handler(update: Update, context: CallbackContext):
         return
 
     if action == "season":
-        if len(parts)  3:
+        if len(parts) < 3:  # Corrected line
             query.edit_message_text(text="Invalid season action.")
             return
         season_name = parts[2]
@@ -238,7 +238,7 @@ def button_handler(update: Update, context: CallbackContext):
         query.edit_message_text(text=f"Select Episode for {season_name}:", reply_markup=reply_markup)
 
     elif action == "episode":
-        if len(parts)  4:
+        if len(parts) < 4:  # Corrected line
             query.edit_message_text(text="Invalid episode action.")
             return
         season_name = parts[2]
@@ -258,7 +258,7 @@ def button_handler(update: Update, context: CallbackContext):
         query.edit_message_text(text=f"Select Quality for {ep_name}:", reply_markup=reply_markup)
 
     elif action == "quality":
-        if len(parts)  5:
+        if len(parts) < 5:  # Corrected line
             query.edit_message_text(text="Invalid quality action.")
             return
         season_name = parts[2]
@@ -304,7 +304,7 @@ def button_handler(update: Update, context: CallbackContext):
 
     elif action == "all_seasons_quality":
         user_id = query.from_user.id
-        if len(parts)  3:
+        if len(parts) < 3:  # Corrected line
             query.edit_message_text(text="Invalid action.")
             return
         quality = parts[2]
@@ -327,7 +327,7 @@ def button_handler(update: Update, context: CallbackContext):
             context.bot.send_message(chat_id=user_id, text=f"Sent {count_sent} episodes for quality {quality}.")
 
     elif action == "all_episodes":
-        if len(parts)  3:
+        if len(parts) < 3:  # Corrected line
             query.edit_message_text(text="Please select a season first.")
             return
         season_name = parts[2]
@@ -342,7 +342,7 @@ def button_handler(update: Update, context: CallbackContext):
 
     elif action == "all_quality":
         user_id = query.from_user.id
-        if len(parts)  4:
+        if len(parts) < 4:  # Corrected line
             query.edit_message_text(text="Invalid action.")
             return
         season_name = parts[2]
