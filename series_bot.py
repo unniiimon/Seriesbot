@@ -1,193 +1,232 @@
 import logging
 import os
-import re
-from datetime import datetime
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import (
+    Update,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    ChatMember,
+)
 from telegram.ext import (
     Updater,
     CommandHandler,
     MessageHandler,
     Filters,
+    CallbackQueryHandler,
     CallbackContext,
 )
 from pymongo import MongoClient
-from telegram.error import TelegramError
+from telegram.error import BadRequest
 
-# Configure logging
+# Enable logging
 logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
-# Load configuration
-BOT_TOKEN = os.environ.get('BOT_TOKEN',"7318650217:AAEXr17lLVfhXGBKgnMLgmtYjV1kJ_pAdmQ" )
-MONGO_URI = os.environ.get('MONGO_URI', "mongodb+srv://Testmon:testmon@cluster0.flh9i33.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0" )
-ADMIN_IDS = {int(x) for x in os.environ.get('ADMIN_IDS', '5387919847').split(',') if x}
+BOT_TOKEN = os.environ.get("BOT_TOKEN")
+MONGO_URI = os.environ.get("MONGO_URI")
+FORCE_SUB_CHANNEL = os.environ.get("FORCE_SUB_CHANNEL")  # Optional for force subscribe
+CUSTOM_FILE_CAPTION = os.environ.get("CUSTOM_FILE_CAPTION")  # Optional caption
+PIC_URL = os.environ.get("PIC_URL")
 
 if not BOT_TOKEN or not MONGO_URI:
-    logger.error('Missing required environment variables')
+    logger.error("Missing BOT_TOKEN or MONGO_URI environment variables")
     exit(1)
 
-# Database connection with error handling
-try:
-    client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000)
-    client.server_info()  # Test connection
-    db = client.series_bot
-    series_collection = db.series
-    logger.info('Database connection established')
-except Exception as e:
-    logger.error(f'Database connection failed: {e}')
-    exit(1)
+client = MongoClient(
+    MONGO_URI, tls=True, tlsAllowInvalidCertificates=True, serverSelectionTimeoutMS=5000
+)
+db = client.series_bot_db
+series_collection = db.series
+
+ADMIN_IDS = {5387919847}  # Replace with your Telegram user ID(s)
 
 def is_admin(user_id: int) -> bool:
     return user_id in ADMIN_IDS
 
-def extract_season_number(season_str: str) -> str:
-    """Convert various season formats to S01 style"""
-    season_str = season_str.upper().replace('SEASON', '').replace('S', '').strip()
+def force_subscribe_check(update: Update, context: CallbackContext) -> bool:
+    if not FORCE_SUB_CHANNEL:
+        return True
+    user_id = update.effective_user.id
     try:
-        return f'S{int(season_str):02d}'
-    except ValueError:
-        return f'S{season_str}'
+        member = context.bot.get_chat_member(chat_id=FORCE_SUB_CHANNEL, user_id=user_id)
+        return member.status in [ChatMember.MEMBER, ChatMember.ADMINISTRATOR, ChatMember.CREATOR]
+    except BadRequest as e:
+        logger.error(f"Force subscribe error: {e}")
+        return False
 
-def get_next_episode(series_name: str, season: str) -> int:
-    """Get next episode number safely"""
-    try:
-        series = series_collection.find_one(
-            {'name': series_name.lower()},
-            {f'seasons.{season}.episodes': 1}
-        )
-        if not series or not series.get('seasons', {}).get(season, {}).get('episodes'):
-            return 1
-        episodes = series['seasons'][season]['episodes'].keys()
-        return max([int(ep[1:]) for ep in episodes if ep.startswith('E') and ep[1:].isdigit()], default=0) + 1
-    except Exception as e:
-        logger.error(f'Episode number error: {e}')
-        return 1
-
-def add_series_command(update: Update, context: CallbackContext):
-    """Handle /add command with robust parsing"""
-    if not is_admin(update.effective_user.id):
-        update.message.reply_text('🚫 Admin only', quote=True)
+def start(update: Update, context: CallbackContext) -> None:
+    if not force_subscribe_check(update, context):
+        update.message.reply_text(f"Please join our channel {FORCE_SUB_CHANNEL} to use this bot.")
         return
 
-    try:
-        # Get the full command text
-        full_text = update.message.text
-        
-        # Extract parts after /add
-        parts = re.split(r'\s*\|\s*', full_text[len('/add'):].strip(), maxsplit=2)
+    update.message.reply_text(
+        "Welcome to the Series Bot!\n\n"
+        "Admins: Use /add series_name|season|quality to set the context.\n"
+        "Then upload files without captions.\n"
+        "To add the next quality for the same series, use /n series_name|quality."
+    )
+
+def add_series_command(update: Update, context: CallbackContext) -> None:
+    user_id = update.effective_user.id
+    if not is_admin(user_id):
+        update.message.reply_text("You are not authorized to add series.")
+        return
+    if context.args:
+        parts = " ".join(context.args).split("|")
         if len(parts) != 3:
-            raise ValueError('Invalid format')
-        
-        series, season, quality = [x.strip() for x in parts]
-        if not all([series, season, quality]):
-            raise ValueError('Empty values')
-        
-        season = extract_season_number(season)
-        series_lower = series.lower()
-
-        # Store in context
-        context.user_data.update({
-            'upload_series': series_lower,
-            'upload_season': season,
-            'upload_quality': quality.lower(),
-            'upload_episode': get_next_episode(series_lower, season)
-        })
-
-        update.message.reply_text(
-            f'⚡ Ready to upload:\n'
-            f'Series: {series}\n'
-            f'Season: {season}\n'
-            f'Quality: {quality}\n'
-            f'Starting from: E{context.user_data["upload_episode"]:02d}\n\n'
-            '📤 Send files now (documents/videos)',
-            quote=True
-        )
-    except Exception as e:
-        logger.warning(f'Add command error: {e}')
-        update.message.reply_text(
-            '❌ Invalid format! Use:\n'
-            '/add series | season | quality\n'
-            'Examples:\n'
-            '/add Breaking Bad | S1 | 720p\n'
-            '/add Stranger Things | Season 3 | 1080p\n'
-            '/add The Boys | 2 | 480p',
-            quote=True
-        )
-
-def handle_file(update: Update, context: CallbackContext):
-    """Process uploaded files with error handling"""
-    try:
-        update.message.reply_chat_action('typing')
-        
-        # Verify setup
-        if not all(k in context.user_data for k in ['upload_series', 'upload_season', 'upload_quality']):
-            update.message.reply_text(
-                '⚠️ First setup with /add series | season | quality',
-                quote=True
-            )
+            update.message.reply_text("Use format: /add series_name|season|quality")
             return
-
-        # Get file
-        file = update.message.document or update.message.video
-        if not file:
-            update.message.reply_text('📛 Please send document or video files only', quote=True)
-            return
-
-        # Prepare data
-        series = context.user_data['upload_series']
-        season = context.user_data['upload_season']
-        quality = context.user_data['upload_quality']
-        ep_num = context.user_data.get('upload_episode', 1)
-        ep_key = f'E{ep_num:02d}'
-
-        # Database operation
-        result = series_collection.update_one(
-            {'name': series},
-            {'$set': {
-                f'seasons.{season}.episodes.{ep_key}.qualities.{quality}': file.file_id,
-                'last_updated': datetime.now()
-            }},
-            upsert=True
-        )
-
-        # Determine if this was new episode
-        if result.upserted_id or not series_collection.find_one({
-            'name': series,
-            f'seasons.{season}.episodes.{ep_key}': {'$exists': True}
-        }):
-            context.user_data['upload_episode'] = ep_num + 1
-            action = '✨ NEW'
-        else:
-            action = '🔄 Updated'
-
+        series_name, season, quality = [p.strip() for p in parts]
+        season = season.upper()
+        if not season.startswith("S"):
+            season = "S" + season.lstrip("Season").strip()
+        context.user_data['upload_series'] = series_name.lower()
+        context.user_data['upload_season'] = season
+        context.user_data['upload_quality'] = quality
+        context.user_data['upload_episode'] = get_next_episode_number(series_name.lower(), season)
         update.message.reply_text(
-            f'{action} {series.title()} {season}{ep_key} ({quality})\n'
-            f'Next: E{context.user_data.get("upload_episode", ep_num + 1):02d}',
-            quote=True
+            f"Context set to {series_name} - {season} - {quality}. "
+            f"Upload files now. Episode will auto-increment from E{context.user_data['upload_episode']}."
         )
-    except TelegramError as e:
-        logger.error(f'Telegram error: {e}')
-    except Exception as e:
-        logger.error(f'File handling error: {e}')
-        update.message.reply_text('⚠️ Error processing file. Try again.', quote=True)
+    else:
+        update.message.reply_text("Use format: /add series_name|season|quality")
+
+def get_next_episode_number(series_name, season):
+    series = series_collection.find_one({"name": series_name})
+    if not series or "seasons" not in series or season not in series["seasons"]:
+        return 1
+    episodes = series["seasons"][season].get("episodes", {})
+    max_ep = 0
+    for ep in episodes.keys():
+        try:
+            ep_num = int(ep.lstrip("E"))
+            if ep_num > max_ep:
+                max_ep = ep_num
+        except:
+            continue
+    return max_ep + 1
+
+def next_quality_command(update: Update, context: CallbackContext) -> None:
+    user_id = update.effective_user.id
+    if not is_admin(user_id):
+        update.message.reply_text("You are not authorized.")
+        return
+    if context.args:
+        parts = " ".join(context.args).split("|")
+        if len(parts) != 2:
+            update.message.reply_text("Use format: /n series_name|quality")
+            return
+        series_name, quality = [p.strip() for p in parts]
+        context.user_data['upload_series'] = series_name.lower()
+        context.user_data['upload_quality'] = quality
+        update.message.reply_text(
+            f"Next quality set to {quality} for series {series_name}. Upload files now."
+        )
+    else:
+        update.message.reply_text("Use format: /n series_name|quality")
+
+def handle_admin_file(update: Update, context: CallbackContext) -> None:
+    user_id = update.effective_user.id
+    if not is_admin(user_id):
+        return
+
+    message = update.message
+    file_obj = message.document or message.video
+    if not file_obj:
+        update.message.reply_text("Please send a document or video file.")
+        return
+
+    series = context.user_data.get("upload_series")
+    season = context.user_data.get("upload_season")
+    quality = context.user_data.get("upload_quality")
+    episode = context.user_data.get("upload_episode")
+
+    if not all([series, season, quality, episode]):
+        update.message.reply_text("Use /add to set series, season, and quality before uploading files.")
+        return
+
+    file_id = file_obj.file_id
+    episode_key = f"E{episode}"
+
+    update_query = {
+        f"seasons.{season}.episodes.{episode_key}.qualities.{quality}": file_id,
+        "name": series
+    }
+
+    series_collection.update_one({"name": series}, {"$set": update_query}, upsert=True)
+    update.message.reply_text(f"Saved: Series {series}, Season {season}, Episode {episode_key}, Quality {quality}.")
+    context.user_data["upload_episode"] = episode + 1
+
+def handle_series_query(update: Update, context: CallbackContext):
+    if update.message.text.startswith("/"):
+        return
+    text = update.message.text.strip().lower()
+    series = series_collection.find_one({"name": text})
+    if not series:
+        update.message.reply_text("Series not found.")
+        return
+
+    if PIC_URL:
+        user_mention = update.message.from_user.mention_html()
+        caption = f"Hi {user_mention}, Select Season for {text.title()}"
+        context.bot.send_photo(update.effective_chat.id, PIC_URL, caption=caption, parse_mode='HTML')
+
+    seasons = series.get("seasons", {})
+    if not seasons:
+        update.message.reply_text("No seasons found for this series.")
+        return
+
+    keyboard = [
+        [InlineKeyboardButton("All Seasons", callback_data=f"all_seasons|{series['name']}")]
+    ]
+    for season_name in sorted(seasons.keys()):
+        keyboard.append(
+            [InlineKeyboardButton(season_name, callback_data=f"season|{series['name']}|{season_name}")]
+        )
+
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    update.message.reply_text(f"Select Season for {series['name']}:", reply_markup=reply_markup)
+
+def button_handler(update: Update, context: CallbackContext):
+    query = update.callback_query
+    query.answer()
+    data = query.data
+    parts = data.split("|")
+
+    if len(parts) < 2:
+        query.edit_message_text(text="Invalid action.")
+        return
+
+    action = parts[0]
+    series_name = parts[1]
+    series = series_collection.find_one({"name": series_name.lower()})
+    if not series:
+        query.edit_message_text(text="Series data not found.")
+        return
+
+    # Implement actions (season, all_seasons, all_episodes, all_quality, episode, quality)
+    # ... similar to previous implementations ...
+
+def error_handler(update: object, context: CallbackContext) -> None:
+    logger.error(msg="Exception while handling an update:", exc_info=context.error)
 
 def main():
-    """Start the bot with proper error handling"""
-    try:
-        updater = Updater(BOT_TOKEN, use_context=True)
-        dp = updater.dispatcher
+    updater = Updater(BOT_TOKEN)
+    dispatcher = updater.dispatcher
 
-        dp.add_handler(CommandHandler('add', add_series_command))
-        dp.add_handler(MessageHandler(Filters.document | Filters.video, handle_file))
+    dispatcher.add_handler(CommandHandler("start", start))
+    dispatcher.add_handler(CommandHandler("add", add_series_command))
+    dispatcher.add_handler(CommandHandler("n", next_quality_command))
+    dispatcher.add_handler(MessageHandler(Filters.document | Filters.video, handle_admin_file))
+    dispatcher.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_message))
 
-        updater.start_polling()
-        logger.info('Bot is running...')
-        updater.idle()
-    except Exception as e:
-        logger.critical(f'Bot failed: {e}')
+    dispatcher.add_handler(CallbackQueryHandler(button_handler))
+    dispatcher.add_error_handler(error_handler)
 
-if __name__ == '__main__':
+    updater.start_polling()
+    logger.info("Bot started.")
+    updater.idle()
+
+if __name__ == "__main__":
     main()
