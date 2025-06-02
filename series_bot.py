@@ -21,9 +21,9 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Load configuration
-BOT_TOKEN = os.environ.get('BOT_TOKEN')
-MONGO_URI = os.environ.get('MONGO_URI')
-ADMIN_IDS = {int(x) for x in os.environ.get('ADMIN_IDS', '').split(',') if x}
+BOT_TOKEN = os.environ.get('BOT_TOKEN',"7318650217:AAEXr17lLVfhXGBKgnMLgmtYjV1kJ_pAdmQ" )
+MONGO_URI = os.environ.get('MONGO_URI', "mongodb+srv://Testmon:testmon@cluster0.flh9i33.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0" )
+ADMIN_IDS = {int(x) for x in os.environ.get('ADMIN_IDS', '5387919847').split(',') if x}
 
 if not BOT_TOKEN or not MONGO_URI:
     logger.error('Missing required environment variables')
