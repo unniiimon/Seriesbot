@@ -17,6 +17,7 @@ from telegram.ext import (
 from pymongo import MongoClient
 from telegram.error import BadRequest
 
+# Enable logging
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
 )
@@ -97,7 +98,7 @@ def add_series_command(update: Update, context: CallbackContext) -> None:
 def next_quality_command(update: Update, context: CallbackContext) -> None:
     user_id = update.effective_user.id
     if not is_admin(user_id):
-        update.message.reply_text("You are not authorized.")
+        update.message.reply_text("You are not authorized to perform this command.")
         return
     if context.args:
         parts = " ".join(context.args).split("|")
@@ -113,7 +114,7 @@ def next_quality_command(update: Update, context: CallbackContext) -> None:
         else:
             update.message.reply_text("Use format: /n series_name|quality or /n quality")
             return
-        
+
         season_key = context.user_data.get('upload_season')
         if not season_key:
             update.message.reply_text("Season not set. Use /add with series_name|season|quality to set the season.")
@@ -227,9 +228,11 @@ def button_handler(update: Update, context: CallbackContext):
             query.edit_message_text(text="No episodes found in this season.")
             return
 
-        buttons = [InlineKeyboardButton("All Episodes", callback_data=f"all_episodes|{series['name']}|{season_name}")]
-        buttons += [InlineKeyboardButton(ep_name, callback_data=f"episode|{series['name']}|{season_name}|{ep_name}") for ep_name in sorted(episodes.keys())]
+        buttons = [InlineKeyboardButton(ep_name, callback_data=f"episode|{series['name']}|{season_name}|{ep_name}") for ep_name in sorted(episodes.keys())]
         
+        # Add All Episodes button at the bottom
+        buttons.append(InlineKeyboardButton("All Episodes", callback_data=f"all_episodes|{series['name']}|{season_name}"))
+
         button_rows = build_button_rows(buttons, row_size=3)
         reply_markup = InlineKeyboardMarkup(button_rows)
         query.edit_message_text(text=f"Select Episode for {season_name}:", reply_markup=reply_markup)
@@ -271,8 +274,10 @@ def button_handler(update: Update, context: CallbackContext):
 
         try:
             if file_id_or_url.startswith("http://") or file_id_or_url.startswith("https://"):
-                keyboard = [InlineKeyboardButton(f"Download {ep_name} in {quality_name}", url=file_id_or_url),
-                            InlineKeyboardButton("Back to Episodes", callback_data=f"episode|{series['name']}|{season_name}|{ep_name}")]
+                keyboard = [
+                    InlineKeyboardButton(f"Download {ep_name} in {quality_name}", url=file_id_or_url),
+                    InlineKeyboardButton("Back to Episodes", callback_data=f"episode|{series['name']}|{season_name}|{ep_name}")
+                ]
                 reply_markup = InlineKeyboardMarkup([keyboard])
                 query.edit_message_text(text=f"Download link for {ep_name} in {quality_name}:", reply_markup=reply_markup)
             else:
