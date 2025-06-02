@@ -219,7 +219,7 @@ def main():
     dispatcher.add_handler(CommandHandler("add", add_series_command))
     dispatcher.add_handler(CommandHandler("n", next_quality_command))
     dispatcher.add_handler(MessageHandler(Filters.document | Filters.video, handle_admin_file))
-    dispatcher.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_message))
+    dispatcher.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_series_query))
 
     dispatcher.add_handler(CallbackQueryHandler(button_handler))
     dispatcher.add_error_handler(error_handler)
