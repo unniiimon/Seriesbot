@@ -17,6 +17,7 @@ from telegram.ext import (
 from pymongo import MongoClient
 from telegram.error import BadRequest
 
+# Enable logging
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
 )
@@ -55,6 +56,7 @@ def force_subscribe_check(update: Update, context: CallbackContext) -> bool:
         return False
 
 def build_button_rows(buttons, row_size=3):
+    """Utility to split buttons into rows"""
     return [buttons[i:i + row_size] for i in range(0, len(buttons), row_size)]
 
 def start(update: Update, context: CallbackContext) -> None:
@@ -229,10 +231,14 @@ def button_handler(update: Update, context: CallbackContext):
 
         episode_buttons = [InlineKeyboardButton(ep_name, callback_data=f"episode|{series['name']}|{season_name}|{ep_name}") for ep_name in sorted(episodes.keys())]
 
-        # All Episodes button on top
-        buttons = [InlineKeyboardButton("All Episodes", callback_data=f"all_episodes|{series['name']}|{season_name}")]
-        button_rows = build_button_rows(episode_buttons, row_size=3)
-        button_rows.insert(0, buttons)  # Insert at the top
+        # Place "All Episodes" button at the top in a separate full-width row
+        all_episodes_button = [InlineKeyboardButton("All Episodes", callback_data=f"all_episodes|{series['name']}|{season_name}")]
+
+        # Build episode buttons into rows of 3
+        episode_button_rows = build_button_rows(episode_buttons, row_size=3)
+
+        # Combine all buttons with "All Episodes" on top
+        button_rows = [all_episodes_button] + episode_button_rows
 
         reply_markup = InlineKeyboardMarkup(button_rows)
         query.edit_message_text(text=f"Select Episode for {season_name}:", reply_markup=reply_markup)
@@ -241,8 +247,7 @@ def button_handler(update: Update, context: CallbackContext):
         if len(parts) < 4:
             query.edit_message_text(text="Invalid episode action.")
             return
-        season_name = parts[2]
-        ep_name = parts[3]
+        season_name, ep_name = parts[2], parts[3]
         season = series.get("seasons", {}).get(season_name, {})
         episode = season.get("episodes", {}).get(ep_name, {})
         qualities = episode.get("qualities", {})
@@ -251,9 +256,11 @@ def button_handler(update: Update, context: CallbackContext):
             return
 
         quality_buttons = [InlineKeyboardButton(q, callback_data=f"quality|{series['name']}|{season_name}|{ep_name}|{q}") for q in sorted(qualities.keys())]
-        quality_buttons.append(InlineKeyboardButton("Back to Seasons", callback_data=f"season|{series['name']}|{season_name}"))
 
-        button_rows = build_button_rows(quality_buttons, row_size=3)
+        # Add back button at the end
+        back_button = [InlineKeyboardButton("⬅️ Back to Seasons", callback_data=f"season|{series['name']}|{season_name}")]
+        button_rows = build_button_rows(quality_buttons, row_size=3) + [back_button]
+
         reply_markup = InlineKeyboardMarkup(button_rows)
         query.edit_message_text(text=f"Select Quality for {ep_name}:", reply_markup=reply_markup)
 
@@ -261,9 +268,7 @@ def button_handler(update: Update, context: CallbackContext):
         if len(parts) < 5:
             query.edit_message_text(text="Invalid quality action.")
             return
-        season_name = parts[2]
-        ep_name = parts[3]
-        quality_name = parts[4]
+        season_name, ep_name, quality_name = parts[2], parts[3], parts[4]
         season = series.get("seasons", {}).get(season_name, {})
         episode = season.get("episodes", {}).get(ep_name, {})
         qualities = episode.get("qualities", {})
@@ -276,20 +281,20 @@ def button_handler(update: Update, context: CallbackContext):
             if file_id_or_url.startswith("http://") or file_id_or_url.startswith("https://"):
                 keyboard = [
                     InlineKeyboardButton(f"Download {ep_name} in {quality_name}", url=file_id_or_url),
-                    InlineKeyboardButton("Back to Episodes", callback_data=f"episode|{series['name']}|{season_name}|{ep_name}")
+                    InlineKeyboardButton("⬅️ Back to Episodes", callback_data=f"episode|{series['name']}|{season_name}|{ep_name}")
                 ]
                 reply_markup = InlineKeyboardMarkup([keyboard])
                 query.edit_message_text(text=f"Download link for {ep_name} in {quality_name}:", reply_markup=reply_markup)
             else:
                 context.bot.send_document(chat_id=query.from_user.id, document=file_id_or_url, caption=CUSTOM_FILE_CAPTION)
-                keyboard = [InlineKeyboardButton("Back to Episodes", callback_data=f"episode|{series['name']}|{season_name}|{ep_name}")]
-                reply_markup = InlineKeyboardMarkup([keyboard])
+                back_button = [InlineKeyboardButton("⬅️ Back to Episodes", callback_data=f"episode|{series['name']}|{season_name}|{ep_name}")]
+                reply_markup = InlineKeyboardMarkup([back_button])
                 query.edit_message_text(text=f"Sent {ep_name} in {quality_name} to your private chat.", reply_markup=reply_markup)
         except Exception as e:
             logger.error(f"Failed to send file: {e}")
             query.edit_message_text(text="Failed to send the file. Please try again later.")
 
-    # The rest of your previous logic goes here for 'all_seasons', 'all_episodes', 'all_quality' etc.
+    # Continue with your existing other action handlers...
 
 def error_handler(update: object, context: CallbackContext) -> None:
     logger.error(msg="Exception while handling an update:", exc_info=context.error)
